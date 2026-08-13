@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # A release build is not incremental; the cache only costs time here.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            linker: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross linker
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Configure cross linker
+        if: matrix.linker != ''
+        shell: bash
+        run: |
+          # Cargo reads the linker from an env var named after the target.
+          target_env=$(echo "${{ matrix.target }}" | tr '[:lower:]-' '[:upper:]_')
+          echo "CARGO_TARGET_${target_env}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+
+      - name: Test
+        # Cross-compiled artefacts cannot execute on the host runner.
+        if: matrix.linker == ''
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && version="${{ github.event.inputs.tag }}" && version="${version#v}"
+          name="llm-verify-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/llm-verify${{ matrix.ext }}" "dist/$name/"
+          cp README.md LICENSE SECURITY.md "dist/$name/"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "${name}.zip" "$name" >/dev/null
+            echo "asset=${name}.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar czf "${name}.tar.gz" "$name"
+            echo "asset=${name}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke test the packaged binary
+        # Proves the artefact actually runs on its own platform before we
+        # publish it. Skipped where the binary cannot execute on the host.
+        if: matrix.linker == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/llm-verify${{ matrix.ext }}"
+          "$bin" --version
+          "$bin" --help > /dev/null
+          "$bin" skill-targets > /dev/null
+          # A run with no endpoint must fail cleanly, not panic.
+          if "$bin" --env-file /dev/null > /dev/null 2>&1; then
+            echo "expected a non-zero exit when no endpoint is configured" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.asset }}
+          path: dist/${{ steps.package.outputs.asset }}
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -la
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write release notes
+        # Built as a file rather than a heredoc: a heredoc terminator inside a
+        # YAML block scalar must sit at column zero, which fights the block's
+        # own indentation.
+        run: |
+          {
+            printf '## 安装\n\n'
+            printf '```bash\n'
+            printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n' "$GITHUB_REPOSITORY"
+            printf '```\n\n'
+            printf 'Windows:\n\n'
+            printf '```powershell\n'
+            printf 'irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n' "$GITHUB_REPOSITORY"
+            printf '```\n\n'
+            printf '## 校验\n\n'
+            printf '下载 `SHA256SUMS` 后：\n\n'
+            printf '```bash\n'
+            printf 'sha256sum -c SHA256SUMS --ignore-missing\n'
+            printf '```\n'
+          } > NOTES.md
+          cat NOTES.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          # --generate-notes appends the auto changelog beneath our own notes.
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes-file NOTES.md \
+            --generate-notes \
+            dist/*

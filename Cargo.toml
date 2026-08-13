@@ -1,0 +1,56 @@
+[package]
+name = "llm-verify"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Black-box authenticity, billing and performance verification for LLM API endpoints"
+authors = ["asale-ai"]
+license = "Apache-2.0"
+repository = "https://github.com/asale-ai/llm-verify"
+homepage = "https://github.com/asale-ai/llm-verify"
+readme = "README.md"
+keywords = ["llm", "api", "verification", "fingerprint", "audit"]
+categories = ["command-line-utilities"]
+exclude = ["samples/", "docs/", ".github/", "*.html"]
+
+[[bin]]
+name = "llm-verify"
+path = "src/main.rs"
+
+[dependencies]
+# CLI. default-features off drops the colour/suggestion machinery we do not need.
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+    "usage",
+    "error-context",
+] }
+
+# HTTP. rustls instead of OpenSSL keeps the binary self-contained and small,
+# and avoids a system OpenSSL dependency on every target we cross-compile to.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+    "http2",
+] }
+
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+] }
+
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.release]
+opt-level = "z"     # optimise for size; this tool is I/O bound, not CPU bound
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
