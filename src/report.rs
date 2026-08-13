@@ -402,6 +402,12 @@ pub struct Identity {
     pub evidence: Vec<String>,
     pub tier_scores: BTreeMap<String, f64>,
     pub accuracy_by_difficulty: BTreeMap<String, f64>,
+    /// How many capability questions the tier estimate rests on, and how far
+    /// the winning hypothesis beat the runner-up. Both belong in the report:
+    /// a tier call from a handful of questions with a narrow margin is a much
+    /// weaker claim than the same call from a wide one.
+    pub tier_questions: u32,
+    pub tier_margin: f64,
 }
 
 // ── billing ────────────────────────────────────────────────────────────────

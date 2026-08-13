@@ -287,6 +287,8 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
             .map(String::from);
         id.tier_confidence = r.metric_f64("fit").unwrap_or(0.0);
         id.tier_severity = r.metric_f64("tier_severity").unwrap_or(0.0) as u8;
+        id.tier_questions = r.metric_f64("questions_asked").unwrap_or(0.0) as u32;
+        id.tier_margin = r.metric_f64("margin").unwrap_or(0.0);
         // A narrow margin means the tier profiles overlapped; withdraw the
         // severity claim rather than assert a downgrade we cannot support.
         if r.metric_f64("margin").unwrap_or(1.0) < 0.06 {

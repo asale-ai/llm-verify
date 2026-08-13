@@ -55,11 +55,19 @@ impl Depth {
     }
 
     /// Questions per difficulty band in the tier estimator.
+    ///
+    /// Measured on a live endpoint, two per band was not enough: the same
+    /// model scored `hard 0/2` on one run and `1/2` on the next, which moved
+    /// the fitted tier by a whole step. The abstention gates caught it — the
+    /// second run degraded to a warning instead of accusing — but a real
+    /// downgrade can be missed that way. Three narrows the swing at the cost
+    /// of three extra requests; `forensic` is still the setting to reach for
+    /// when the answer has to hold up.
     pub fn tier_questions(&self) -> usize {
         match self {
             Self::Fast => 1,
-            Self::Balanced => 2,
-            Self::Forensic => 4,
+            Self::Balanced => 3,
+            Self::Forensic => 5,
         }
     }
 }

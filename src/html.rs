@@ -515,8 +515,9 @@ fn identity_panel(h: &mut String, rep: &Report) {
 <div class="cmp-row"><div class="top"><span class="k">宣称家族 / 档位</span><span class="n">{cf} / {ct}</span></div></div>
 <div class="cmp-row"><div class="top"><span class="k">实测家族</span><span class="n">{of}（信心 {fc:.0}%）</span></div></div>
 <div class="cmp-row"><div class="top"><span class="k">实测档位</span><span class="n">{et}（拟合 {tc:.2}）</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">档位判定依据</span><span class="n">{tq} 道能力题 · 领先次优 {tm:.3}</span></div></div>
 </div>
-<div class="ratio-note {ncls}" style="margin-top:14px">{istatus}</div>
+<div class="ratio-note {ncls}" style="margin-top:14px">{istatus}</div>{thin}
 </div>"#,
         claimed = esc(&id.claimed_model),
         cf = esc(id.claimed_family.as_deref().unwrap_or("未知")),
@@ -525,8 +526,15 @@ fn identity_panel(h: &mut String, rep: &Report) {
         fc = id.family_confidence * 100.0,
         et = esc(id.estimated_tier.as_deref().unwrap_or("未测出")),
         tc = id.tier_confidence,
+        tq = id.tier_questions,
+        tm = id.tier_margin,
         ncls = id.status.css(),
         istatus = esc(id.status.label_zh()),
+        thin = if id.tier_questions > 0 && id.tier_questions < 9 {
+            r#"<div style="margin-top:10px;font-size:12.5px;color:var(--muted)">档位判定的样本量偏小，相邻档位之间可能因单题得失而摆动。需要更有把握的结论请用 <code>--depth forensic</code> 重跑。</div>"#
+        } else {
+            ""
+        },
     );
 
     // Capability profile.
@@ -1057,6 +1065,8 @@ mod tests {
                 evidence: vec!["自述指向 openai".into()],
                 tier_scores: [("large".to_string(), 0.2), ("small".to_string(), 0.9)].into(),
                 accuracy_by_difficulty: [("easy".to_string(), 0.9)].into(),
+                tier_questions: 9,
+                tier_margin: 0.31,
             },
             billing: BillingAudit {
                 method: "count_tokens 端点".into(),
@@ -1196,6 +1206,24 @@ mod tests {
         rep.billing.billed_input = 0;
         let h = render(&rep);
         assert!(h.contains("没有可对照的独立计数"));
+    }
+
+    #[test]
+    fn tier_call_shows_what_it_rests_on() {
+        let h = render(&sample_report());
+        assert!(h.contains("档位判定依据"));
+        assert!(h.contains("9 道能力题"));
+        // A well-sampled call must not carry the thin-sample caveat.
+        assert!(!h.contains("样本量偏小"));
+    }
+
+    #[test]
+    fn a_thin_tier_sample_carries_a_caveat() {
+        let mut rep = sample_report();
+        rep.identity.tier_questions = 6;
+        let h = render(&rep);
+        assert!(h.contains("样本量偏小"));
+        assert!(h.contains("--depth forensic"));
     }
 
     #[test]
