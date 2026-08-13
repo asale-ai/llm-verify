@@ -341,15 +341,38 @@ fn skill_md() -> String {
 }
 
 fn gemini_toml() -> String {
-    // TOML multi-line basic strings end at the first unescaped `\"\"\"`, so the
-    // prompt body must not contain that sequence. It does not, but escape
-    // defensively rather than emit a file that fails to parse.
-    let body = instructions().replace(r#"""""#, r#"\"\"\""#);
+    // TOML *literal* strings, not basic strings.
+    //
+    // The skill body is markdown whose tables contain `\|` inside cells. A
+    // basic string reads that backslash as the start of an escape sequence and
+    // the whole file fails to parse — which is exactly what an earlier version
+    // shipped. Literal strings perform no escape processing at all, so the
+    // body survives byte for byte. The only sequence a literal cannot hold is
+    // its own delimiter, which the helpers below take care of.
     format!(
-        "description = \"{}\"\n\nprompt = \"\"\"\n{}\n\"\"\"\n",
-        DESCRIPTION.replace('"', "'"),
-        body
+        "description = {}\n\nprompt = '''\n{}\n'''\n",
+        toml_literal(DESCRIPTION),
+        escape_for_toml_literal(&instructions())
     )
+}
+
+/// Wrap a single-line value as a TOML literal string. Falls back to a basic
+/// string when the value contains an apostrophe, which a literal cannot hold.
+/// The descriptions here use full-width quotation marks, so the fallback is
+/// defensive rather than expected.
+fn toml_literal(s: &str) -> String {
+    if s.contains('\'') {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        format!("'{s}'")
+    }
+}
+
+/// A multi-line literal string ends at the first `'''`. The body does not
+/// contain one today; this keeps a future edit from silently producing an
+/// unparseable file.
+fn escape_for_toml_literal(body: &str) -> String {
+    body.replace("'''", "''\u{200B}'")
 }
 
 #[cfg(test)]
@@ -426,15 +449,60 @@ mod tests {
     }
 
     #[test]
-    fn gemini_toml_has_required_keys_and_closes_its_string() {
+    fn gemini_toml_parses_and_round_trips_the_body() {
         let toml = gemini_toml();
-        assert!(toml.starts_with("description = \""));
-        assert!(toml.contains("prompt = \"\"\""));
-        // Exactly two triple-quote delimiters: the opener and the closer.
-        assert_eq!(toml.matches("\"\"\"").count(), 2, "unbalanced TOML string");
-        // A raw double quote inside the description would end it early.
-        let desc_line = toml.lines().next().unwrap();
-        assert_eq!(desc_line.matches('"').count(), 2);
+        assert!(toml.starts_with("description = '"));
+        assert!(toml.contains("prompt = '''"));
+        assert_eq!(
+            toml.matches("'''").count(),
+            2,
+            "a literal string must have exactly its opening and closing delimiter"
+        );
+
+        let (desc_line, rest) = toml.split_once('\n').unwrap();
+        let desc = desc_line
+            .strip_prefix("description = '")
+            .and_then(|s| s.strip_suffix('\''))
+            .expect("description must be a closed literal string");
+        assert!(!desc.is_empty());
+        assert!(
+            !desc.contains('\''),
+            "an apostrophe would close the literal early"
+        );
+
+        let body = rest
+            .split_once("prompt = '''\n")
+            .and_then(|(_, b)| b.strip_suffix("'''\n"))
+            .expect("prompt must be a closed multi-line literal")
+            .strip_suffix('\n')
+            .unwrap();
+        assert_eq!(body, instructions(), "body must survive verbatim");
+    }
+
+    #[test]
+    fn the_body_still_contains_the_backslash_that_broke_basic_strings() {
+        // Regression guard. `\|` inside a markdown table cell is what made the
+        // generated TOML unparseable under basic strings. If the body ever
+        // loses it, the round-trip test above stops proving anything.
+        assert!(instructions().contains(r"\|"));
+    }
+
+    #[test]
+    fn toml_literal_falls_back_when_an_apostrophe_is_present() {
+        assert_eq!(toml_literal("plain"), "'plain'");
+        // A literal string may hold backslashes and double quotes untouched;
+        // only an apostrophe forces the basic-string fallback.
+        assert_eq!(toml_literal(r#"a\b"c"#), "'a\\b\"c'");
+        assert_eq!(toml_literal("it's"), "\"it's\"");
+        // Once in the fallback, backslashes and quotes must be escaped.
+        assert_eq!(toml_literal(r#"it's a\b"c"#), r#""it's a\\b\"c""#);
+    }
+
+    #[test]
+    fn a_triple_quote_in_the_body_cannot_terminate_the_string_early() {
+        let escaped = escape_for_toml_literal("before ''' after");
+        assert!(!escaped.contains("'''"));
+        assert!(escaped.contains("before") && escaped.contains("after"));
     }
 
     #[test]

@@ -10,24 +10,7 @@
 curl -fsSL https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.sh | sh
 ```
 
-<details>
-<summary>Windows / 其它方式</summary>
-
-PowerShell：
-
-```powershell
-irm https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.ps1 | iex
-```
-
-从源码：
-
-```bash
-cargo install --git https://github.com/asale-ai/llm-verify
-```
-
-也可以直接从 [Releases](https://github.com/asale-ai/llm-verify/releases/latest) 下载对应平台的压缩包。
-
-</details>
+Windows 用 `irm https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.ps1 | iex`。
 
 ## 用法
 
@@ -88,17 +71,27 @@ llm-verify
 
 ## 在 AI 编程工具里用
 
+技能发布在 [ClawHub](https://clawhub.ai)：
+
+```bash
+clawhub install @asale-ai/llm-verify
+```
+
+或者用自带的安装器，一次写入所有已检测到的工具（Claude Code / Codex CLI / OpenCode / Gemini CLI）：
+
 ```bash
 llm-verify install-skill
 ```
 
-会把技能写入所有已检测到的工具（Claude Code / Codex CLI / OpenCode / Gemini CLI），之后直接问「帮我看看这个 API 是不是真的」即可。
+装好之后直接问「帮我看看这个 API 是不是真的」「这个中转站有没有多收钱」就会自动调用。
 
 ```bash
-llm-verify skill-targets              # 看装到哪些位置
+llm-verify skill-targets              # 看会装到哪些位置
 llm-verify install-skill -t claude    # 只装一个
 llm-verify install-skill --project    # 装到当前项目
 ```
+
+技能本身只是使用说明，实际检测由 `llm-verify` 二进制执行，所以两者都需要。
 
 ## 能测什么
 

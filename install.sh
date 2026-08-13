@@ -37,12 +37,12 @@ detect_target() {
   case "$os" in
     Darwin) os_part="apple-darwin" ;;
     Linux)  os_part="unknown-linux-gnu" ;;
-    *) die "不支持的操作系统: $os。Windows 请改用 install.ps1。" ;;
+    *) die "不支持的操作系统: ${os}。Windows 请改用 install.ps1。" ;;
   esac
   case "$arch" in
     x86_64|amd64)  arch_part="x86_64" ;;
     arm64|aarch64) arch_part="aarch64" ;;
-    *) die "不支持的 CPU 架构: $arch。可用的架构为 x86_64 与 aarch64。" ;;
+    *) die "不支持的 CPU 架构: ${arch}。可用的架构为 x86_64 与 aarch64。" ;;
   esac
   if [ "$os_part" = "unknown-linux-gnu" ] && [ "$arch_part" = "aarch64" ]; then
     : # built and published
@@ -128,17 +128,17 @@ fi
 # ── unpack and install ────────────────────────────────────────────────────
 tar xzf "$TMP/$ASSET" -C "$TMP" || die "解压失败，压缩包可能已损坏。"
 SRC="$TMP/$NAME/$BIN"
-[ -f "$SRC" ] || die "压缩包结构不符合预期，未找到 $NAME/$BIN。"
+[ -f "$SRC" ] || die "压缩包结构不符合预期，未找到 $NAME/${BIN}。"
 
-mkdir -p "$BIN_DIR" || die "无法创建目录 $BIN_DIR（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
+mkdir -p "$BIN_DIR" || die "无法创建目录 ${BIN_DIR}（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
 if ! install -m 755 "$SRC" "$BIN_DIR/$BIN" 2>/dev/null; then
-  cp "$SRC" "$BIN_DIR/$BIN" || die "无法写入 $BIN_DIR/$BIN（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
+  cp "$SRC" "$BIN_DIR/$BIN" || die "无法写入 $BIN_DIR/${BIN}（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
   chmod 755 "$BIN_DIR/$BIN"
 fi
 
 # Verify it actually runs on this machine before declaring success.
 if ! "$BIN_DIR/$BIN" --version >/dev/null 2>&1; then
-  die "已安装到 $BIN_DIR/$BIN，但无法执行。
+  die "已安装到 $BIN_DIR/${BIN}，但无法执行。
        可能是架构不匹配，或系统缺少所需的 libc 版本。"
 fi
 ok "已安装 $("$BIN_DIR/$BIN" --version) → $BIN_DIR/$BIN"
@@ -157,7 +157,7 @@ case ":${PATH}:" in
       *)      RC="你的 shell 配置文件" ;;
     esac
     printf '\n'
-    warn "$BIN_DIR 不在 PATH 中。把下面这行加进 $RC："
+    warn "$BIN_DIR 不在 PATH 中。把下面这行加进 ${RC}："
     printf '\n      %bexport PATH="%s:$PATH"%b\n' "$G" "$BIN_DIR" "$Z"
     printf '\n  然后重开终端，或先用完整路径运行：\n'
     printf '      %b%s/%s --help%b\n' "$D" "$BIN_DIR" "$BIN" "$Z"
