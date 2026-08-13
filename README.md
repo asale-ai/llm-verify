@@ -1,18 +1,20 @@
 # llm-verify
 
-检测你正在用的 LLM 端点：模型真假、计费掺水、中转来源、性能与降智。
+**English** · [简体中文](README.zh-CN.md)
 
-单二进制，无运行时依赖。检测结果输出为一份可以直接用浏览器打开的 HTML 报告。
+Verify the LLM endpoint you are actually using: model authenticity, billing inflation, relay provenance, performance and silent downgrades.
 
-## 安装
+A single binary with no runtime dependencies. Results come out as an HTML report you open in a browser.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.sh | sh
 ```
 
-Windows 用 `irm https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.ps1 | iex`。
+On Windows: `irm https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.ps1 | iex`
 
-## 用法
+## Use
 
 ```bash
 llm-verify --base-url https://api.anthropic.com \
@@ -20,9 +22,9 @@ llm-verify --base-url https://api.anthropic.com \
            --model claude-opus-4-5
 ```
 
-跑完会生成一份 HTML 报告并自动在浏览器打开。
+It writes an HTML report and opens it.
 
-凭据也可以放进 `.env` 或环境变量，这样命令行就只剩模型名：
+Credentials can live in `.env` or the environment instead, leaving only the model on the command line:
 
 ```bash
 # .env
@@ -35,89 +37,90 @@ LLM_VERIFY_MODEL=claude-opus-4-5
 llm-verify
 ```
 
-### 常用参数
+### Options
 
-| 参数 | 说明 |
+| Flag | Meaning |
 |---|---|
-| `--protocol anthropic\|openai` | 不填会根据 URL 与模型名自动推断 |
-| `--depth fast\|balanced\|forensic` | 默认 `balanced`。`forensic` 采样更多、更准也更贵 |
-| `--claimed-model <ID>` | 供应商宣称的模型名与实际请求的不同时用，用于查降级 |
-| `-o <path>` | HTML 报告路径，传目录则自动命名 |
-| `--json <path>` | 同时输出机器可读的 JSON |
-| `--no-open` | 不自动打开浏览器 |
+| `--protocol anthropic\|openai` | Inferred from the URL and model name if omitted |
+| `--depth fast\|balanced\|forensic` | Default `balanced`. `forensic` samples more — slower and costlier, but firmer |
+| `--claimed-model <ID>` | Use when the vendor's advertised name differs from the ID you request. This is how you check for a downgrade |
+| `--lang en\|zh` | Report language. Follows the system locale, then falls back to English |
+| `-o <path>` | HTML report path; pass a directory to auto-name the file |
+| `--json <path>` | Also emit machine-readable JSON |
+| `--no-open` | Do not open a browser |
 
-### 退出码
+### Exit codes
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| 0 | 干净 |
-| 1 | 评分不及格，或判定为存疑 / 假冒 / 无法判定 |
-| 2 | 命中硬门禁 |
+| 0 | Clean |
+| 1 | Failing score, or a suspicious / counterfeit / inconclusive verdict |
+| 2 | A hard gate tripped |
 
-可以直接当 CI 门禁用。
+Usable as a CI gate as-is.
 
-## 报告怎么读
+## Reading the report
 
-结论分两条**互相独立**的轴：
+The verdict has two **independent** axes:
 
-- **真伪**：正品 / 正品（有瑕疵）/ 第三方转发 / 存疑 / 假冒 / 无法判定
-- **来源**：官方直连 / 云平台 / 订阅号 / 普通中转 / 逆向渠道 / 无法确定
+- **Authenticity** — genuine / genuine-with-defects / relayed / suspicious / counterfeit / inconclusive
+- **Origin** — direct from vendor / cloud platform / subscription-derived / relay / reconstructed channel / undetermined
 
-一个经过中转的真模型，真伪是「第三方转发」而不是「假冒」——链路更长，但模型没被换。
+A real model behind a relay is *relayed*, not *counterfeit*. Longer path, same model.
 
-**硬门禁**是加权分掩盖不掉的硬事实，命中任意一条直接判定存疑并以退出码 2 结束：
+**Hard gates** are facts no weighted score can excuse. Any one of them forces a suspicious verdict and exit code 2:
 
-静默 fallback · 共享池裸转发 · 档位降级 · 第三方壳注入 · 缓存回放 · 隐藏 prompt 注入 · 响应重放
+silent fallback · shared-pool forwarding · tier downgrade · third-party wrapper injection · cache replay · hidden prompt injection · response replay
 
-## 在 AI 编程工具里用
+## Use it from an AI coding tool
 
-技能发布在 [ClawHub](https://clawhub.ai)：
+The skill is published on [ClawHub](https://clawhub.ai):
 
 ```bash
 clawhub install @asale-ai/llm-verify
 ```
 
-或者用自带的安装器，一次写入所有已检测到的工具（Claude Code / Codex CLI / OpenCode / Gemini CLI）：
+Or use the built-in installer, which writes to every tool it detects (Claude Code / Codex CLI / OpenCode / Gemini CLI):
 
 ```bash
 llm-verify install-skill
 ```
 
-装好之后直接问「帮我看看这个 API 是不是真的」「这个中转站有没有多收钱」就会自动调用。
+Then just ask: *"is this API actually giving me what I paid for?"*
 
 ```bash
-llm-verify skill-targets              # 看会装到哪些位置
-llm-verify install-skill -t claude    # 只装一个
-llm-verify install-skill --project    # 装到当前项目
+llm-verify skill-targets              # show install locations
+llm-verify install-skill -t claude    # one tool only
+llm-verify install-skill --project    # into the current repository
 ```
 
-技能本身只是使用说明，实际检测由 `llm-verify` 二进制执行，所以两者都需要。
+The skill is only the usage guide — the `llm-verify` binary does the work, so you need both.
 
-## 能测什么
+## What it checks
 
-40 项探针，分七组：
+40 probes across seven groups:
 
-| 组 | 回答的问题 |
+| Group | Question it answers |
 |---|---|
-| 协议契约 | 这是不是一条正牌 API 通道 |
-| 流式传输 | 流式响应是否规范，有没有空 body |
-| 计量计费 | 计费数字可信吗，有没有多收钱 |
-| 渠道溯源 | 这条链路上有哪些中转 |
-| 性能速度 | 首字延迟、吞吐与抖动 |
-| 模型身份 | 背后跑的是不是它声称的那个模型 |
-| 跨请求一致性 | 多次请求的行为是否一致 |
+| Protocol contract | Is this a genuine API channel? |
+| Streaming | Does streaming follow the protocol, or arrive empty? |
+| Metering & billing | Are the token counts honest, or are you overcharged? |
+| Channel provenance | What relays sit on this path? |
+| Performance | First-token latency, throughput and jitter |
+| Model identity | Is the model behind this the one that was sold? |
+| Cross-request consistency | Does the endpoint behave the same way every time? |
 
-## 能力边界
+## Limits
 
-对诚实供应商的一次误判，代价远高于一次漏检。工具在证据不足时一律弃权，不猜结论。以下几条请一并了解：
+One false accusation against an honest provider costs far more than one miss. This tool abstains when the evidence is thin rather than guessing. Please know the following:
 
-- **只做到「档位」粒度**（旗舰 / 中档 / 轻量）。同档位内的相邻版本（如同系列的 4.5 与 4.6）无法区分。
-- **档位判定依赖采样，样本少时会摆动。** 默认深度用 9 道能力题，相邻档位之间仍可能因单题得失差一档；工具在差距不明显时会主动弃权而不是乱判，代价是可能漏掉真实的降级。要拿得出手的结论请用 `--depth forensic`（15 道题）。报告里会写明这次判定用了多少道题、领先次优档位多少。
-- **能力高于宣称不算欺诈**，只有实测低于宣称才计入风险。
-- **中间层注入会污染身份指纹**，所以协议契约层先跑，发现注入时身份结论会自动降权。
-- **无法证明服务端权重就是官方权重**，只能证明行为与预期一致或不一致。
-- **一次检测只代表此刻**，渐进式降级需要定期重跑对比。
+- **Resolution stops at tier granularity** (flagship / mid / light). Adjacent versions inside one tier — say 4.5 and 4.6 of the same line — cannot be separated.
+- **The tier call depends on sampling.** The default depth asks 9 capability questions, and adjacent tiers can still swing on a single one. The tool abstains when the margin is narrow, which costs it some genuine downgrades. Use `--depth forensic` (15 questions) when the answer has to hold up. The report states how many questions the call rests on and by how much the winner beat the runner-up.
+- **Delivering above the claimed tier is not fraud** and carries no risk weight. Only measuring *below* the claim counts.
+- **Middle layers contaminate identity fingerprints**, which is why the contract layer runs first; where injection is found, identity confidence is reduced automatically.
+- **Server-side weights cannot be proven** — only whether behaviour matches expectations.
+- **One run describes one moment.** Gradual degradation needs periodic re-runs and comparison.
 
-## 许可
+## Licence
 
 [Apache-2.0](LICENSE)

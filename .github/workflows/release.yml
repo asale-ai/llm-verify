@@ -86,7 +86,7 @@ jobs:
           name="llm-verify-${version}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/llm-verify${{ matrix.ext }}" "dist/$name/"
-          cp README.md LICENSE SECURITY.md "dist/$name/"
+          cp README.md README.zh-CN.md LICENSE SECURITY.md SECURITY.zh-CN.md "dist/$name/"
           cd dist
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a -tzip "${name}.zip" "$name" >/dev/null
@@ -145,7 +145,7 @@ jobs:
         # own indentation.
         run: |
           {
-            printf '## 安装\n\n'
+            printf '## Install\n\n'
             printf '```bash\n'
             printf 'curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n' "$GITHUB_REPOSITORY"
             printf '```\n\n'
@@ -153,11 +153,14 @@ jobs:
             printf '```powershell\n'
             printf 'irm https://raw.githubusercontent.com/%s/main/install.ps1 | iex\n' "$GITHUB_REPOSITORY"
             printf '```\n\n'
-            printf '## 校验\n\n'
-            printf '下载 `SHA256SUMS` 后：\n\n'
+            printf '## Verify the download\n\n'
             printf '```bash\n'
             printf 'sha256sum -c SHA256SUMS --ignore-missing\n'
-            printf '```\n'
+            printf '```\n\n'
+            printf '## Report language\n\n'
+            printf 'Reports follow your system locale and fall back to English. '
+            printf 'Force it with `--lang en` or `--lang zh`.\n\n'
+            printf '报告语言默认跟随系统 locale，识别不出则用英文；可用 `--lang zh` 强制中文。\n'
           } > NOTES.md
           cat NOTES.md
 

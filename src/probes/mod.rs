@@ -10,6 +10,7 @@ pub mod perf;
 pub mod stream;
 
 use crate::client::Client;
+use crate::i18n::Lang;
 use crate::report::{BillingRound, ProbeResult};
 use crate::util::Rng;
 use std::cell::RefCell;
@@ -98,6 +99,7 @@ impl PerfSample {
 pub struct Ctx {
     pub client: Client,
     pub depth: Depth,
+    pub lang: Lang,
     pub claimed_model: String,
     pub rng: RefCell<Rng>,
     pub perf: RefCell<Vec<PerfSample>>,
@@ -111,10 +113,11 @@ pub struct Ctx {
 }
 
 impl Ctx {
-    pub fn new(client: Client, depth: Depth, claimed_model: String) -> Self {
+    pub fn new(client: Client, depth: Depth, lang: Lang, claimed_model: String) -> Self {
         Self {
             client,
             depth,
+            lang,
             claimed_model,
             rng: RefCell::new(Rng::new()),
             perf: RefCell::new(Vec::new()),

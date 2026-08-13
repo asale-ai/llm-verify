@@ -24,7 +24,13 @@ fn ping(ctx: &Ctx) -> ChatRequest {
 }
 
 pub async fn preflight(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("preflight", "连通性预检", G).weight(3);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "preflight",
+        ts!(l, "Connectivity preflight", "连通性预检"),
+        G,
+    )
+    .weight(3);
     let t0 = now_ms();
     let req = ping(ctx);
 
@@ -41,8 +47,8 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
         Err(e) => {
             *ctx.reachable.borrow_mut() = false;
             return p
-                .error(format!("无法连接：{e}"))
-                .finding("后续探针已全部跳过——连不上时其它结论都没有意义")
+                .error(t!(l, "Cannot connect: {e}", "无法连接：{e}"))
+                .finding(t!(l, "Every later probe was skipped — no other conclusion means anything when the endpoint is unreachable", "后续探针已全部跳过——连不上时其它结论都没有意义"))
                 .took((now_ms() - t0) as u64);
         }
     };
@@ -56,16 +62,31 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
         401 | 403 => {
             *ctx.reachable.borrow_mut() = false;
             return p
-                .fail(format!("鉴权失败（HTTP {}）", raw.status))
-                .finding("API Key 无效或没有该模型的权限")
+                .fail(t!(
+                    l,
+                    "Authentication failed (HTTP {})",
+                    "鉴权失败（HTTP {}）",
+                    raw.status
+                ))
+                .finding(t!(
+                    l,
+                    "The API key is invalid, or has no access to this model",
+                    "API Key 无效或没有该模型的权限"
+                ))
                 .evidence(body_excerpt)
                 .took(took);
         }
         404 => {
             *ctx.reachable.borrow_mut() = false;
             return p
-                .fail("HTTP 404：端点路径不存在")
-                .finding(format!(
+                .fail(t!(
+                    l,
+                    "HTTP 404: the endpoint path does not exist",
+                    "HTTP 404：端点路径不存在"
+                ))
+                .finding(t!(
+                    l,
+                    "Requested {}; check whether --base-url needs a /v1 suffix",
                     "实际请求的是 {}，确认 --base-url 是否需要带 /v1",
                     ctx.client
                         .endpoint
@@ -77,14 +98,27 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
         s if s == 400 && raw.body.contains("model") => {
             *ctx.reachable.borrow_mut() = false;
             return p
-                .fail("模型不存在或不被该端点接受")
-                .finding(format!("请求的模型：{}", ctx.client.endpoint.model))
+                .fail(t!(
+                    l,
+                    "The model does not exist, or this endpoint will not serve it",
+                    "模型不存在或不被该端点接受"
+                ))
+                .finding(t!(
+                    l,
+                    "Requested model: {}",
+                    "请求的模型：{}",
+                    ctx.client.endpoint.model
+                ))
                 .evidence(body_excerpt)
                 .took(took);
         }
         429 => {
             return p
-                .warn("HTTP 429：被限流，结果可能不完整")
+                .warn(t!(
+                    l,
+                    "HTTP 429: rate limited, results may be incomplete",
+                    "HTTP 429：被限流，结果可能不完整"
+                ))
                 .evidence(body_excerpt)
                 .took(took);
         }
@@ -99,15 +133,26 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     }
 
     ctx.observe(&raw, "");
-    p.pass(format!("端点可达，{}ms", raw.duration_ms))
-        .metric("status", raw.status)
-        .metric("duration_ms", raw.duration_ms)
-        .took(took)
+    p.pass(t!(
+        l,
+        "Endpoint reachable, {}ms",
+        "端点可达，{}ms",
+        raw.duration_ms
+    ))
+    .metric("status", raw.status)
+    .metric("duration_ms", raw.duration_ms)
+    .took(took)
 }
 
 /// Does the endpoint's own catalogue list the model it just served?
 pub async fn model_catalog(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("model_catalog", "模型目录核验", G).weight(1);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "model_catalog",
+        ts!(l, "Model catalogue", "模型目录核验"),
+        G,
+    )
+    .weight(1);
     let t0 = now_ms();
     let models = match ctx.client.list_models().await {
         Ok(m) => m,
@@ -115,7 +160,9 @@ pub async fn model_catalog(ctx: &Ctx) -> ProbeResult {
             // Plenty of legitimate relays do not expose /models. Absent is not
             // guilty; it is simply one fewer corroborating signal.
             return p
-                .skip(format!(
+                .skip(t!(
+                    l,
+                    "/models unavailable: {}",
                     "/models 不可用：{}",
                     crate::util::truncate(&format!("{e}"), 80)
                 ))
@@ -130,15 +177,24 @@ pub async fn model_catalog(ctx: &Ctx) -> ProbeResult {
         .metric("target_listed", listed);
 
     if models.is_empty() {
-        p.warn("/models 返回了空目录").took(took)
+        p.warn(t!(
+            l,
+            "/models returned an empty catalogue",
+            "/models 返回了空目录"
+        ))
+        .took(took)
     } else if listed {
-        p.pass(format!("目录含 {} 个模型，包含目标模型", models.len()))
-            .took(took)
+        p.pass(t!(
+            l,
+            "{} models listed, including the target",
+            "目录含 {} 个模型，包含目标模型",
+            models.len()
+        ))
+        .took(took)
     } else {
-        p.warn(format!("目录里没有 {target}，但请求却成功了"))
-            .finding("目录与实际可用模型不一致，可能是手工拼装的模型列表")
-            .finding(format!(
-                "目录示例：{}",
+        p.warn(t!(l, "{target} is not in the catalogue, yet the request succeeded", "目录里没有 {target}，但请求却成功了"))
+            .finding(t!(l, "The catalogue disagrees with what is actually servable — possibly a hand-assembled model list", "目录与实际可用模型不一致，可能是手工拼装的模型列表"))
+            .finding(t!(l, "Catalogue sample: {}", "目录示例：{}",
                 models
                     .iter()
                     .take(6)
@@ -161,7 +217,13 @@ pub async fn model_catalog(ctx: &Ctx) -> ProbeResult {
 /// models correctly refused that as adversarial, which the probe then misread
 /// as the middleware dropping the prompt.
 pub async fn system_adherence(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("system_adherence", "System Prompt 生效", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "system_adherence",
+        ts!(l, "System prompt delivery", "System Prompt 生效"),
+        G,
+    )
+    .weight(2);
     let t0 = now_ms();
     let token = ctx.rng.borrow_mut().hex(6);
     let req = ChatRequest::new(
@@ -194,20 +256,29 @@ pub async fn system_adherence(ctx: &Ctx) -> ProbeResult {
         .evidence(crate::util::truncate(resp.text.trim(), 200));
 
     if echoed {
-        p.pass("System Prompt 完整送达（模型复述了其中的专属标记）")
-            .took(took)
+        p.pass(t!(
+            l,
+            "System prompt arrived intact (the model repeated a marker only it contained)",
+            "System Prompt 完整送达（模型复述了其中的专属标记）"
+        ))
+        .took(took)
     } else if resp.text.trim().is_empty() {
-        p.warn("响应为空，无法判断 System Prompt 是否送达")
-            .took(took)
+        p.warn(t!(
+            l,
+            "Empty response; cannot tell whether the system prompt arrived",
+            "响应为空，无法判断 System Prompt 是否送达"
+        ))
+        .took(took)
     } else {
-        p.fail("模型说不出 System Prompt 里的专属标记")
-            .finding("该标记只存在于 System Prompt 中，答不出说明它没有送达模型——很可能被中间层丢弃或覆盖")
+        p.fail(t!(l, "The model could not produce the marker from its system prompt", "模型说不出 System Prompt 里的专属标记"))
+            .finding(t!(l, "That marker existed only inside the system prompt. Not knowing it means the prompt never reached the model — most likely dropped or overwritten by a middle layer", "该标记只存在于 System Prompt 中，答不出说明它没有送达模型——很可能被中间层丢弃或覆盖"))
             .took(took)
     }
 }
 
 pub async fn response_schema(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("schema", "响应结构契约", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new("schema", ts!(l, "Response schema", "响应结构契约"), G).weight(2);
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
 
@@ -255,7 +326,9 @@ pub async fn response_schema(ctx: &Ctx) -> ProbeResult {
         .evidence(crate::util::truncate(&resp.text, 200));
 
     if !resp.id_prefix_ok(proto) {
-        p = p.finding(format!(
+        p = p.finding(t!(
+            l,
+            "Message ID prefix does not match the {proto} convention: {}",
             "消息 ID 前缀不符合 {proto} 规范：{}",
             crate::util::truncate(&resp.id, 40)
         ));
@@ -263,17 +336,38 @@ pub async fn response_schema(ctx: &Ctx) -> ProbeResult {
 
     let took = (now_ms() - t0) as u64;
     if missing.is_empty() && resp.id_prefix_ok(proto) {
-        p.pass("必要字段齐全，ID 格式正确").took(took)
+        p.pass(t!(
+            l,
+            "All required fields present, ID format correct",
+            "必要字段齐全，ID 格式正确"
+        ))
+        .took(took)
     } else if missing.is_empty() {
-        p.warn("字段齐全，但 ID 格式不像原厂").took(took)
+        p.warn(t!(
+            l,
+            "Fields complete, but the ID format is not first-party",
+            "字段齐全，但 ID 格式不像原厂"
+        ))
+        .took(took)
     } else {
-        p.fail(format!("缺少必要字段：{}", missing.join(", ")))
-            .took(took)
+        p.fail(t!(
+            l,
+            "Missing required fields: {}",
+            "缺少必要字段：{}",
+            missing.join(", ")
+        ))
+        .took(took)
     }
 }
 
 pub async fn model_echo(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("model_echo", "model 字段回显", G).weight(3);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "model_echo",
+        ts!(l, "Echoed model field", "model 字段回显"),
+        G,
+    )
+    .weight(3);
     let t0 = now_ms();
     let requested = ctx.client.endpoint.model.clone();
 
@@ -290,14 +384,29 @@ pub async fn model_echo(ctx: &Ctx) -> ProbeResult {
         .metric("returned", returned.clone());
 
     if returned.is_empty() {
-        return p.warn("响应里没有 model 字段，无法核对").took(took);
+        return p
+            .warn(t!(
+                l,
+                "No model field in the response; nothing to check against",
+                "响应里没有 model 字段，无法核对"
+            ))
+            .took(took);
     }
     if models_equivalent(&requested, &returned) {
-        p.pass(format!("回显一致：{returned}")).took(took)
-    } else {
-        p.fail(format!("请求 {requested}，回显 {returned}"))
-            .finding("回显与请求不符是最直接的换模证据")
+        p.pass(t!(l, "Echo matches: {returned}", "回显一致：{returned}"))
             .took(took)
+    } else {
+        p.fail(t!(
+            l,
+            "Requested {requested}, got back {returned}",
+            "请求 {requested}，回显 {returned}"
+        ))
+        .finding(t!(
+            l,
+            "A mismatched echo is the most direct evidence of a substitution",
+            "回显与请求不符是最直接的换模证据"
+        ))
+        .took(took)
     }
 }
 
@@ -336,9 +445,19 @@ pub fn models_equivalent(requested: &str, returned: &str) -> bool {
 }
 
 pub async fn missing_version(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("missing_version", "缺版本头应被拒", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "missing_version",
+        ts!(l, "Missing version header rejected", "缺版本头应被拒"),
+        G,
+    )
+    .weight(2);
     if ctx.client.endpoint.protocol != Protocol::Anthropic {
-        return p.skip("仅适用于 Anthropic 协议");
+        return p.skip(t!(
+            l,
+            "Only applies to the Anthropic protocol",
+            "仅适用于 Anthropic 协议"
+        ));
     }
     let t0 = now_ms();
     let opts = RequestOpts {
@@ -362,25 +481,44 @@ pub async fn missing_version(ctx: &Ctx) -> ProbeResult {
     let p = p.metric("status", raw.status);
 
     if raw.status == 400 && raw.body.to_ascii_lowercase().contains("anthropic-version") {
-        p.pass("按规范拒绝了缺少 anthropic-version 的请求")
-            .took(took)
+        p.pass(t!(
+            l,
+            "Rejected a request missing anthropic-version, as specified",
+            "按规范拒绝了缺少 anthropic-version 的请求"
+        ))
+        .took(took)
     } else if (200..300).contains(&raw.status) {
-        p.fail("缺少 anthropic-version 仍然成功")
-            .finding("原厂 API 必定拒绝该请求；能成功说明中间层自己补了版本头，是一层裸转发")
+        p.fail(t!(l, "Succeeded without anthropic-version", "缺少 anthropic-version 仍然成功"))
+            .finding(t!(l, "A first-party API always rejects this. Succeeding means a middle layer supplied the header itself — a bare forwarding hop", "原厂 API 必定拒绝该请求；能成功说明中间层自己补了版本头，是一层裸转发"))
             .took(took)
     } else {
-        p.warn(format!("拒绝了，但状态码是 {} 而非规范的 400", raw.status))
-            .evidence(crate::util::truncate(raw.body.trim(), 200))
-            .took(took)
+        p.warn(t!(
+            l,
+            "Rejected, but with status {} rather than the specified 400",
+            "拒绝了，但状态码是 {} 而非规范的 400",
+            raw.status
+        ))
+        .evidence(crate::util::truncate(raw.body.trim(), 200))
+        .took(took)
     }
 }
 
 pub async fn missing_auth(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("missing_auth", "缺鉴权应被拒", G).weight(3);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "missing_auth",
+        ts!(l, "Missing auth rejected", "缺鉴权应被拒"),
+        G,
+    )
+    .weight(3);
     if ctx.client.endpoint.api_key.trim().is_empty() {
         // A local Ollama or vLLM instance legitimately needs no key; with no
         // key configured there is no "missing" state to test.
-        return p.skip("未配置 API Key，无从对比");
+        return p.skip(t!(
+            l,
+            "No API key configured, so there is nothing to omit",
+            "未配置 API Key，无从对比"
+        ));
     }
     let t0 = now_ms();
     let opts = RequestOpts {
@@ -404,20 +542,26 @@ pub async fn missing_auth(ctx: &Ctx) -> ProbeResult {
     let p = p.metric("status", raw.status);
 
     match raw.status {
-        401 | 403 => p.pass("按规范拒绝了无鉴权请求").took(took),
+        401 | 403 => p.pass(t!(l, "Rejected an unauthenticated request, as specified", "按规范拒绝了无鉴权请求")).took(took),
         s if (200..300).contains(&s) => p
-            .fail("不带 API Key 也能拿到回答")
-            .finding("说明这个端点在用共享池裸转发，你的 Key 只是它的计费凭据，不是上游凭据")
+            .fail(t!(l, "Answered without any API key", "不带 API Key 也能拿到回答"))
+            .finding(t!(l, "The endpoint forwards from a shared pool. Your key is its billing token, not the upstream credential", "说明这个端点在用共享池裸转发，你的 Key 只是它的计费凭据，不是上游凭据"))
             .metric("shared_pool_signal", true)
             .took(took),
         s => p
-            .warn(format!("拒绝了，但状态码是 {s} 而非 401/403"))
+            .warn(t!(l, "Rejected, but with status {s} rather than 401/403", "拒绝了，但状态码是 {s} 而非 401/403"))
             .took(took),
     }
 }
 
 pub async fn invalid_model(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("invalid_model", "无效模型名应硬失败", G).weight(3);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "invalid_model",
+        ts!(l, "Invalid model hard-fails", "无效模型名应硬失败"),
+        G,
+    )
+    .weight(3);
     let t0 = now_ms();
     // A suffix nothing could legitimately route, plus run-unique noise so a
     // provider cannot allow-list the literal string.
@@ -443,19 +587,30 @@ pub async fn invalid_model(ctx: &Ctx) -> ProbeResult {
     let p = p.metric("status", raw.status).metric("probe_model", bogus);
 
     if (200..300).contains(&raw.status) {
-        p.fail("请求一个不存在的模型，居然成功了")
-            .finding("端点在静默 fallback——你请求什么模型都可能被路由到同一个后端")
+        p.fail(t!(l, "A model that cannot exist was served anyway", "请求一个不存在的模型，居然成功了"))
+            .finding(t!(l, "The endpoint falls back silently — whatever model you ask for may be routed to the same backend", "端点在静默 fallback——你请求什么模型都可能被路由到同一个后端"))
             .metric("silent_fallback", true)
             .evidence(crate::util::truncate(raw.body.trim(), 300))
             .took(took)
     } else {
-        p.pass(format!("按预期拒绝（HTTP {}）", raw.status))
-            .took(took)
+        p.pass(t!(
+            l,
+            "Rejected as expected (HTTP {})",
+            "按预期拒绝（HTTP {}）",
+            raw.status
+        ))
+        .took(took)
     }
 }
 
 pub async fn error_envelope(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("error_envelope", "错误对象契约", G).weight(1);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "error_envelope",
+        ts!(l, "Error envelope", "错误对象契约"),
+        G,
+    )
+    .weight(1);
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     // Truncated JSON: valid prefix, no closing brackets.
@@ -480,26 +635,50 @@ pub async fn error_envelope(ctx: &Ctx) -> ProbeResult {
 
     if (200..300).contains(&raw.status) {
         return p
-            .fail("畸形 JSON 被接受了")
-            .finding("中间层在替你补全请求体，说明它会重写请求")
+            .fail(t!(l, "Malformed JSON was accepted", "畸形 JSON 被接受了"))
+            .finding(t!(l, "A middle layer is completing the request body for you, which means it rewrites requests", "中间层在替你补全请求体，说明它会重写请求"))
             .took(took);
     }
     match raw.json() {
-        Some(v) if error_envelope_ok(proto, &v) => p.pass("错误对象符合协议规范").took(took),
+        Some(v) if error_envelope_ok(proto, &v) => p
+            .pass(t!(
+                l,
+                "Error object matches the protocol envelope",
+                "错误对象符合协议规范"
+            ))
+            .took(took),
         Some(_) => p
-            .warn("拒绝了，但错误对象不符合规范结构")
-            .finding("自建壳常见特征：状态码对，envelope 形状不对")
+            .warn(t!(
+                l,
+                "Rejected, but the error object does not match the envelope",
+                "拒绝了，但错误对象不符合规范结构"
+            ))
+            .finding(t!(
+                l,
+                "Typical of a hand-rolled shim: right status code, wrong envelope shape",
+                "自建壳常见特征：状态码对，envelope 形状不对"
+            ))
             .evidence(crate::util::truncate(raw.body.trim(), 250))
             .took(took),
         None => p
-            .warn("错误响应不是 JSON")
+            .warn(t!(
+                l,
+                "The error response was not JSON",
+                "错误响应不是 JSON"
+            ))
             .evidence(crate::util::truncate(raw.body.trim(), 250))
             .took(took),
     }
 }
 
 pub async fn stop_reason_enum(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("stop_reason", "stop_reason 取值合法", G).weight(1);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "stop_reason",
+        ts!(l, "stop_reason is valid", "stop_reason 取值合法"),
+        G,
+    )
+    .weight(1);
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     let (resp, raw) = match ctx.client.chat(&ping(ctx)).await {
@@ -514,9 +693,16 @@ pub async fn stop_reason_enum(ctx: &Ctx) -> ProbeResult {
         p.pass(format!("stop_reason = {}", resp.stop_reason))
             .took(took)
     } else if resp.stop_reason.is_empty() {
-        p.fail("响应没有 stop_reason 字段").took(took)
+        p.fail(t!(
+            l,
+            "The response carried no stop_reason field",
+            "响应没有 stop_reason 字段"
+        ))
+        .took(took)
     } else {
-        p.fail(format!(
+        p.fail(t!(
+            l,
+            "stop_reason = {} is not a valid value for {proto}",
             "stop_reason = {} 不在 {proto} 的合法取值内",
             resp.stop_reason
         ))
@@ -525,7 +711,13 @@ pub async fn stop_reason_enum(ctx: &Ctx) -> ProbeResult {
 }
 
 pub async fn max_tokens_truncation(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("max_tokens", "max_tokens 截断语义", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "max_tokens",
+        ts!(l, "max_tokens truncation", "max_tokens 截断语义"),
+        G,
+    )
+    .weight(2);
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     const CAP: u32 = 16;
@@ -556,13 +748,28 @@ pub async fn max_tokens_truncation(ctx: &Ctx) -> ProbeResult {
     let over_cap = out > CAP + 2;
 
     if truncated && !over_cap {
-        p.pass(format!("在 {CAP} token 处正确截断")).took(took)
+        p.pass(t!(
+            l,
+            "Truncated correctly at {CAP} tokens",
+            "在 {CAP} token 处正确截断"
+        ))
+        .took(took)
     } else if over_cap {
-        p.fail(format!("输出 {out} token，超过设定的上限 {CAP}"))
-            .finding("max_tokens 被中间层忽略或改写")
-            .took(took)
+        p.fail(t!(
+            l,
+            "Produced {out} tokens, over the requested cap of {CAP}",
+            "输出 {out} token，超过设定的上限 {CAP}"
+        ))
+        .finding(t!(
+            l,
+            "max_tokens was ignored or rewritten by a middle layer",
+            "max_tokens 被中间层忽略或改写"
+        ))
+        .took(took)
     } else {
-        p.warn(format!(
+        p.warn(t!(
+            l,
+            "No truncation reported (stop_reason={}), {out} tokens produced",
             "未报告截断（stop_reason={}），输出 {out} token",
             resp.stop_reason
         ))
@@ -571,7 +778,13 @@ pub async fn max_tokens_truncation(ctx: &Ctx) -> ProbeResult {
 }
 
 pub async fn stop_sequence(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("stop_sequence", "stop_sequences 生效", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "stop_sequence",
+        ts!(l, "stop_sequences honoured", "stop_sequences 生效"),
+        G,
+    )
+    .weight(2);
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     // A marker the model has no reason to emit spontaneously.
@@ -602,16 +815,36 @@ pub async fn stop_sequence(ctx: &Ctx) -> ProbeResult {
         .evidence(crate::util::truncate(&resp.text, 200));
 
     if leaked {
-        p.fail("停止序列出现在输出里，说明它没有生效")
-            .finding("stop_sequences 被中间层丢弃")
-            .took(took)
+        p.fail(t!(
+            l,
+            "The stop sequence appears in the output, so it did not take effect",
+            "停止序列出现在输出里，说明它没有生效"
+        ))
+        .finding(t!(
+            l,
+            "stop_sequences was dropped by a middle layer",
+            "stop_sequences 被中间层丢弃"
+        ))
+        .took(took)
     } else if resp.stopped_at_sequence(proto) && resp.text.to_uppercase().contains("ALPHA") {
-        p.pass("停止序列正确触发并被裁掉").took(took)
+        p.pass(t!(
+            l,
+            "The stop sequence fired and was trimmed correctly",
+            "停止序列正确触发并被裁掉"
+        ))
+        .took(took)
     } else if resp.text.trim().is_empty() {
-        p.warn("输出为空，无法判断停止序列是否生效").took(took)
+        p.warn(t!(
+            l,
+            "Empty output; cannot tell whether the stop sequence worked",
+            "输出为空，无法判断停止序列是否生效"
+        ))
+        .took(took)
     } else {
         // The model may simply have declined to produce the marker at all.
-        p.warn(format!(
+        p.warn(t!(
+            l,
+            "Marker absent, but stop_reason={} does not indicate a stop sequence either",
             "标记未出现，但 stop_reason={} 也未指向停止序列",
             resp.stop_reason
         ))

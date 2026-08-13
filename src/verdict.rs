@@ -12,6 +12,7 @@
 //! miss. So every uncertain path degrades toward "cannot tell" rather than
 //! toward "guilty", and every conclusion carries the trace that produced it.
 
+use crate::i18n::Lang;
 use crate::probes::identity::{tier_from_model_id, Tier};
 use crate::report::*;
 use std::collections::BTreeMap;
@@ -57,14 +58,15 @@ fn passed(results: &[ProbeResult], id: &str) -> bool {
 fn reverse_signals(
     results: &[ProbeResult],
     protocol: crate::protocol::Protocol,
+    l: Lang,
 ) -> (Vec<String>, f64) {
     const STRONG: f64 = 1.0;
     const WEAK: f64 = 0.5;
 
     let mut out = Vec::new();
     let mut weight = 0.0;
-    let add = |w: f64, msg: &str, out: &mut Vec<String>, total: &mut f64| {
-        out.push(msg.to_string());
+    let add = |w: f64, msg: String, out: &mut Vec<String>, total: &mut f64| {
+        out.push(msg);
         *total += w;
     };
 
@@ -73,28 +75,79 @@ fn reverse_signals(
         .and_then(|r| r.metric_bool("usage_absent"))
         .unwrap_or(false)
     {
-        add(STRONG, "流式响应完全不上报 usage", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(
+                l,
+                "the stream reports no usage at all",
+                "流式响应完全不上报 usage"
+            ),
+            &mut out,
+            &mut weight,
+        );
     }
     if failed(results, "usage_present") {
-        add(STRONG, "usage 字段缺失或恒为零", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(
+                l,
+                "usage is missing or permanently zero",
+                "usage 字段缺失或恒为零"
+            ),
+            &mut out,
+            &mut weight,
+        );
     }
     if failed(results, "max_tokens") {
-        add(STRONG, "max_tokens 未生效", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(l, "max_tokens has no effect", "max_tokens 未生效"),
+            &mut out,
+            &mut weight,
+        );
     }
     if failed(results, "stop_sequence") {
-        add(STRONG, "stop_sequences 未生效", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(l, "stop_sequences has no effect", "stop_sequences 未生效"),
+            &mut out,
+            &mut weight,
+        );
     }
     if failed(results, "system_adherence") {
-        add(STRONG, "System Prompt 被丢弃", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(l, "the system prompt is dropped", "System Prompt 被丢弃"),
+            &mut out,
+            &mut weight,
+        );
     }
     if failed(results, "sse_format") || failed(results, "stream_body") {
-        add(STRONG, "流式传输不符合规范", &mut out, &mut weight);
+        add(
+            STRONG,
+            t!(
+                l,
+                "streaming does not follow the protocol",
+                "流式传输不符合规范"
+            ),
+            &mut out,
+            &mut weight,
+        );
     }
     // Only meaningful where the protocol actually defines the route.
     if protocol == crate::protocol::Protocol::Anthropic {
         if let Some(r) = find(results, "token_recount") {
             if r.metric_bool("authoritative") == Some(false) {
-                add(STRONG, "count_tokens 端点不可用", &mut out, &mut weight);
+                add(
+                    STRONG,
+                    t!(
+                        l,
+                        "the count_tokens endpoint is unavailable",
+                        "count_tokens 端点不可用"
+                    ),
+                    &mut out,
+                    &mut weight,
+                );
             }
         }
     }
@@ -105,10 +158,24 @@ fn reverse_signals(
         status_of(results, "error_envelope"),
         Some(Status::Warn | Status::Fail)
     ) {
-        add(WEAK, "错误对象不符合协议规范", &mut out, &mut weight);
+        add(
+            WEAK,
+            t!(
+                l,
+                "the error object does not match the protocol envelope",
+                "错误对象不符合协议规范"
+            ),
+            &mut out,
+            &mut weight,
+        );
     }
     if matches!(status_of(results, "official_headers"), Some(Status::Warn)) {
-        add(WEAK, "缺少官方特征响应头", &mut out, &mut weight);
+        add(
+            WEAK,
+            t!(l, "vendor marker headers are absent", "缺少官方特征响应头"),
+            &mut out,
+            &mut weight,
+        );
     }
 
     (out, weight)
@@ -116,13 +183,13 @@ fn reverse_signals(
 
 /// Conditions that override the weighted score entirely. Each one is a fact
 /// about the endpoint that no amount of good behaviour elsewhere excuses.
-fn hard_gates(results: &[ProbeResult], identity: &Identity) -> Vec<GateHit> {
+fn hard_gates(results: &[ProbeResult], identity: &Identity, l: Lang) -> Vec<GateHit> {
     let mut hits = Vec::new();
-    let mut gate = |name: &str, probe: &str, reason: &str| {
+    let mut gate = |name: String, probe: &str, reason: String| {
         hits.push(GateHit {
-            name: name.to_string(),
+            name,
             probe: probe.to_string(),
-            reason: reason.to_string(),
+            reason,
         });
     };
 
@@ -131,9 +198,9 @@ fn hard_gates(results: &[ProbeResult], identity: &Identity) -> Vec<GateHit> {
         .unwrap_or(false)
     {
         gate(
-            "静默 fallback",
+            t!(l, "Silent fallback", "静默 fallback"),
             "invalid_model",
-            "请求一个不存在的模型也返回了内容，说明模型名不决定后端",
+            t!(l, "A model that cannot exist was still served, so the model name does not determine the backend", "请求一个不存在的模型也返回了内容，说明模型名不决定后端"),
         );
     }
     if find(results, "missing_auth")
@@ -141,41 +208,53 @@ fn hard_gates(results: &[ProbeResult], identity: &Identity) -> Vec<GateHit> {
         .unwrap_or(false)
     {
         gate(
-            "共享池裸转发",
+            t!(l, "Shared-pool forwarding", "共享池裸转发"),
             "missing_auth",
-            "不带 API Key 也能取得回答，你的 Key 并非上游凭据",
+            t!(
+                l,
+                "An answer came back with no API key, so your key is not the upstream credential",
+                "不带 API Key 也能取得回答，你的 Key 并非上游凭据"
+            ),
         );
     }
     if identity.tier_severity >= 2 {
         gate(
-            "档位降级",
+            t!(l, "Tier downgrade", "档位降级"),
             "tier_estimate",
-            "实测能力档位与宣称相差两档以上，无法用采样噪声解释",
+            t!(l, "Measured capability sits two or more tiers below the claim, which sampling noise cannot explain", "实测能力档位与宣称相差两档以上，无法用采样噪声解释"),
         );
     }
     if failed(results, "wrapper_marker") {
         gate(
-            "第三方壳注入",
+            t!(l, "Third-party wrapper injection", "第三方壳注入"),
             "wrapper_marker",
-            "响应中检出第三方包装层标记，它会改写你的 prompt 与响应",
+            t!(l, "Third-party wrapper markers appear in the response; that layer rewrites your prompt and the reply", "响应中检出第三方包装层标记，它会改写你的 prompt 与响应"),
         );
     }
     if failed(results, "cache_replay") {
         gate(
-            "缓存回放",
+            t!(l, "Cache replay", "缓存回放"),
             "cache_replay",
-            "高温度下多次采样逐字相同，返回的不是真实生成结果",
+            t!(l, "Repeated high-temperature samples came back word-for-word identical; these are not freshly generated", "高温度下多次采样逐字相同，返回的不是真实生成结果"),
         );
     }
     if failed(results, "input_inflation") {
         gate(
-            "隐藏 prompt 注入",
+            t!(l, "Hidden prompt injection", "隐藏 prompt 注入"),
             "input_inflation",
-            "最小 prompt 被计入大量 token，每次请求都在为注入内容付费",
+            t!(l, "A minimal prompt is billed as many tokens; every request pays for injected content", "最小 prompt 被计入大量 token，每次请求都在为注入内容付费"),
         );
     }
     if failed(results, "id_unique") {
-        gate("响应重放", "id_unique", "消息 ID 出现重复，响应被复用");
+        gate(
+            t!(l, "Response replay", "响应重放"),
+            "id_unique",
+            t!(
+                l,
+                "Message IDs repeat, so responses are being reused",
+                "消息 ID 出现重复，响应被复用"
+            ),
+        );
     }
     hits
 }
@@ -218,7 +297,7 @@ fn score(results: &[ProbeResult]) -> (f64, BTreeMap<String, f64>) {
 }
 
 /// Assemble the identity view from the surface and capability probes.
-pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity {
+pub fn build_identity(results: &[ProbeResult], claimed_model: &str, l: Lang) -> Identity {
     let mut id = Identity {
         claimed_model: claimed_model.to_string(),
         claimed_family: crate::probes::identity::family_from_model_id(claimed_model),
@@ -240,7 +319,8 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
         // but self-report never exceeds medium confidence on its own.
         id.family_confidence = (hits / 3.0).clamp(0.0, 1.0) * 0.7;
         if let Some(e) = &r.evidence {
-            id.evidence.push(format!("自述身份：{e}"));
+            id.evidence
+                .push(t!(l, "Self-identification: {e}", "自述身份：{e}"));
         }
     }
     if let Some(r) = find(results, "meta_creator") {
@@ -250,11 +330,15 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
                 // confidence; disagreeing lowers it.
                 if id.observed_family.as_deref() == Some(f) {
                     id.family_confidence = (id.family_confidence + 0.25).min(0.95);
-                    id.evidence.push(format!("创造者自述同样指向 {f}"));
+                    id.evidence.push(t!(
+                        l,
+                        "The creator answer also points to {f}",
+                        "创造者自述同样指向 {f}"
+                    ));
                 } else if id.observed_family.is_some() {
                     id.family_confidence *= 0.6;
                     id.evidence
-                        .push(format!("创造者自述指向 {f}，与身份自述不一致"));
+                        .push(t!(l, "The creator answer points to {f}, disagreeing with the self-identification", "创造者自述指向 {f}，与身份自述不一致"));
                 } else {
                     id.observed_family = Some(f.to_string());
                     id.family_confidence = 0.4;
@@ -293,10 +377,19 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
         // severity claim rather than assert a downgrade we cannot support.
         if r.metric_f64("margin").unwrap_or(1.0) < 0.06 {
             id.tier_severity = 0;
-            id.evidence.push("档位候选过于接近，未断言降级".to_string());
+            id.evidence.push(
+                t!(
+                    l,
+                    "Tier candidates were too close; no downgrade asserted",
+                    "档位候选过于接近，未断言降级"
+                )
+                .to_string(),
+            );
         }
         if let Some(t) = &id.estimated_tier {
-            id.evidence.push(format!(
+            id.evidence.push(t!(
+                l,
+                "Measured capability tier: {t} (fit {:.2})",
                 "能力实测档位：{t}（拟合 {:.2}）",
                 id.tier_confidence
             ));
@@ -304,7 +397,8 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
     }
     if let Some(r) = find(results, "world_knowledge") {
         if matches!(r.status, Status::Fail | Status::Warn) {
-            id.evidence.push(format!("知识截止：{}", r.summary));
+            id.evidence
+                .push(t!(l, "Knowledge cutoff: {}", "知识截止：{}", r.summary));
         }
     }
     if let Some(r) = find(results, "tps") {
@@ -319,10 +413,12 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
             };
             if let Some(implied) = implied {
                 if implied != claimed && (claimed.rank() - implied.rank()).abs() >= 2 {
-                    id.evidence.push(format!(
+                    id.evidence.push(t!(
+                        l,
+                        "Throughput points to {}, which disagrees with the claimed {}",
                         "吞吐速度指向{}，与宣称的{}不符",
-                        implied.label_zh(),
-                        claimed.label_zh()
+                        implied.label(l),
+                        claimed.label(l)
                     ));
                 }
             }
@@ -350,16 +446,22 @@ pub fn build_identity(results: &[ProbeResult], claimed_model: &str) -> Identity 
     // A family verdict resting on a weak self-report is not a family verdict.
     if id.status == IdentityStatus::FamilyMismatch && id.family_confidence < 0.35 {
         id.status = IdentityStatus::Ambiguous;
-        id.evidence
-            .push("家族信号强度不足，未断言家族不符".to_string());
+        id.evidence.push(
+            t!(
+                l,
+                "The family signal was too weak; no family mismatch asserted",
+                "家族信号强度不足，未断言家族不符"
+            )
+            .to_string(),
+        );
     }
     id
 }
 
-pub fn build_billing(results: &[ProbeResult], model: &str) -> BillingAudit {
+pub fn build_billing(results: &[ProbeResult], model: &str, l: Lang) -> BillingAudit {
     let mut b = BillingAudit {
-        method: "未测量".into(),
-        pricing_source: "内置定价表".into(),
+        method: t!(l, "not measured", "未测量"),
+        pricing_source: t!(l, "built-in price table", "内置定价表"),
         ..Default::default()
     };
 
@@ -368,7 +470,7 @@ pub fn build_billing(results: &[ProbeResult], model: &str) -> BillingAudit {
             .metrics
             .get("method")
             .and_then(|v| v.as_str())
-            .unwrap_or("未知")
+            .unwrap_or(ts!(l, "unknown", "未知"))
             .to_string();
         b.billed_input = r.metric_f64("billed_input").unwrap_or(0.0) as u32;
         b.honest_input = r.metric_f64("honest_input").unwrap_or(0.0) as u32;
@@ -394,7 +496,11 @@ pub fn build_billing(results: &[ProbeResult], model: &str) -> BillingAudit {
         };
     }
     if crate::pricing::lookup(model).is_none() {
-        b.pricing_source = format!("定价表无 {model} 条目，未折算金额");
+        b.pricing_source = t!(
+            l,
+            "No price entry for {model}; no currency figure applied",
+            "定价表无 {model} 条目，未折算金额"
+        );
     }
     for id in [
         "input_inflation",
@@ -412,16 +518,16 @@ pub fn build_billing(results: &[ProbeResult], model: &str) -> BillingAudit {
     b
 }
 
-pub fn build_channel(results: &[ProbeResult]) -> ChannelSignature {
+pub fn build_channel(results: &[ProbeResult], l: Lang) -> ChannelSignature {
     let mut c = ChannelSignature {
-        label: "未知代理".into(),
-        display: "未知代理".into(),
+        key: crate::probes::channel::UNKNOWN_PROXY.to_string(),
+        display: crate::probes::channel::display(crate::probes::channel::UNKNOWN_PROXY, l),
         ..Default::default()
     };
     if let Some(r) = find(results, "channel_signature") {
-        if let Some(l) = r.metrics.get("channel").and_then(|v| v.as_str()) {
-            c.label = l.to_string();
-            c.display = l.to_string();
+        if let Some(k) = r.metrics.get("channel").and_then(|v| v.as_str()) {
+            c.key = k.to_string();
+            c.display = crate::probes::channel::display(k, l);
         }
         c.confidence = r.metric_f64("confidence").unwrap_or(0.0);
         c.tier = r.metric_f64("tier").unwrap_or(3.0) as u8;
@@ -451,10 +557,15 @@ fn classify_channel(
     if reverse_weight >= REVERSE_THRESHOLD {
         return Channel::ReverseProxy;
     }
-    match channel.label.as_str() {
-        "Anthropic 官方" | "OpenAI 官方" => Channel::Official,
-        "AWS Bedrock" | "Google Vertex" | "Azure AI Foundry" | "AWS API Gateway" => Channel::Cloud,
-        "未知代理" => {
+    // Routed on the classifier's stable key, never on its display name — a
+    // translated label must not be able to change the verdict.
+    use crate::probes::channel as ch;
+    match channel.key.as_str() {
+        ch::ANTHROPIC_OFFICIAL | ch::OPENAI_OFFICIAL => Channel::Official,
+        ch::AWS_BEDROCK | ch::GOOGLE_VERTEX | ch::AZURE_FOUNDRY | ch::AWS_APIGATEWAY => {
+            Channel::Cloud
+        }
+        ch::UNKNOWN_PROXY => {
             if passed(results, "official_headers") {
                 Channel::Subscription
             } else {
@@ -471,37 +582,45 @@ pub fn decide(
     billing: &BillingAudit,
     channel_sig: &ChannelSignature,
     protocol: crate::protocol::Protocol,
+    l: Lang,
 ) -> Verdict {
     let mut trace = Vec::new();
     let mut signals = Vec::new();
 
     let (score, group_scores) = score(results);
-    trace.push(format!("加权分 {score:.1}"));
+    trace.push(t!(l, "Weighted score {score:.1}", "加权分 {score:.1}"));
 
     let errored = results.iter().filter(|r| r.status == Status::Error).count();
     let total = results.len().max(1);
     let coverage_gap = errored as f64 / total as f64;
-    trace.push(format!(
+    trace.push(t!(
+        l,
+        "Coverage gap {:.0}% ({errored}/{total} probes could not run)",
         "覆盖缺口 {:.0}%（{errored}/{total} 个探针未能执行）",
         coverage_gap * 100.0
     ));
 
-    let gates = hard_gates(results, identity);
+    let gates = hard_gates(results, identity, l);
     for g in &gates {
-        trace.push(format!("硬门禁命中：{} — {}", g.name, g.reason));
+        trace.push(t!(
+            l,
+            "Hard gate tripped: {} — {}",
+            "硬门禁命中：{} — {}",
+            g.name,
+            g.reason
+        ));
         signals.push(format!("{}：{}", g.name, g.reason));
     }
 
-    let (reverse, reverse_weight) = reverse_signals(results, protocol);
+    let (reverse, reverse_weight) = reverse_signals(results, protocol, l);
     if !reverse.is_empty() {
-        trace.push(format!(
-            "逆向信号 {} 项（加权 {reverse_weight:.1}，判定门槛 {REVERSE_THRESHOLD:.1}）：{}",
+        trace.push(t!(l, "{} reverse-channel signal(s) (weight {reverse_weight:.1}, threshold {REVERSE_THRESHOLD:.1}): {}", "逆向信号 {} 项（加权 {reverse_weight:.1}，判定门槛 {REVERSE_THRESHOLD:.1}）：{}",
             reverse.len(),
             reverse.join("、")
         ));
     }
     let channel = classify_channel(results, channel_sig, reverse_weight);
-    trace.push(format!("来源判定：{}", channel.label_zh()));
+    trace.push(t!(l, "Origin: {}", "来源判定：{}", channel.label(l)));
 
     // ── authenticity ───────────────────────────────────────────────────────
     let unreachable = status_of(results, "preflight")
@@ -509,23 +628,47 @@ pub fn decide(
         .unwrap_or(true);
 
     let authenticity = if unreachable {
-        trace.push("连通性预检未通过，无法判定".into());
+        trace.push(t!(
+            l,
+            "Connectivity preflight did not pass; no verdict possible",
+            "连通性预检未通过，无法判定"
+        ));
         Authenticity::Inconclusive
     } else if failed(results, "model_echo") && identity.status == IdentityStatus::FamilyMismatch {
-        trace.push("model 回显与身份自述同时对不上".into());
+        trace.push(t!(
+            l,
+            "The echoed model and the self-identification both disagree",
+            "model 回显与身份自述同时对不上"
+        ));
         Authenticity::Counterfeit
     } else if identity.status == IdentityStatus::FamilyMismatch && identity.family_confidence >= 0.5
     {
-        trace.push("身份指纹指向另一个模型家族".into());
+        trace.push(t!(
+            l,
+            "Identity fingerprints point at a different model family",
+            "身份指纹指向另一个模型家族"
+        ));
         Authenticity::Counterfeit
     } else if !gates.is_empty() {
-        trace.push("命中硬门禁，直接判存疑".into());
+        trace.push(t!(
+            l,
+            "A hard gate tripped; verdict forced to suspicious",
+            "命中硬门禁，直接判存疑"
+        ));
         Authenticity::Suspicious
     } else if reverse_weight >= REVERSE_THRESHOLD {
-        trace.push(format!("逆向渠道信号加权 {reverse_weight:.1} 达到门槛"));
+        trace.push(t!(
+            l,
+            "Reverse-channel signal weight {reverse_weight:.1} reached the threshold",
+            "逆向渠道信号加权 {reverse_weight:.1} 达到门槛"
+        ));
         Authenticity::Suspicious
     } else if coverage_gap > 0.25 {
-        trace.push("超过四分之一的探针未能执行，数据不足".into());
+        trace.push(t!(
+            l,
+            "Over a quarter of probes could not run; not enough data",
+            "超过四分之一的探针未能执行，数据不足"
+        ));
         Authenticity::Inconclusive
     } else if score >= 90.0 && billing.input_ratio <= 1.05 && channel == Channel::Official {
         Authenticity::Authentic
@@ -533,12 +676,21 @@ pub fn decide(
         if channel == Channel::Official || channel == Channel::Cloud {
             Authenticity::Authentic
         } else {
-            trace.push("行为干净但经过转发".into());
+            trace.push(t!(
+                l,
+                "Behaviour is clean but the request is relayed",
+                "行为干净但经过转发"
+            ));
             Authenticity::ThirdParty
         }
     } else if score >= 70.0 {
         if billing.input_ratio > 1.15 {
-            trace.push(format!("计费倍率 {:.2}× 偏高", billing.input_ratio));
+            trace.push(t!(
+                l,
+                "Billing ratio {:.2}x runs high",
+                "计费倍率 {:.2}× 偏高",
+                billing.input_ratio
+            ));
             Authenticity::AuthenticDegraded
         } else {
             Authenticity::ThirdParty
@@ -546,7 +698,7 @@ pub fn decide(
     } else if score >= 50.0 {
         Authenticity::Suspicious
     } else {
-        trace.push("加权分低于 50".into());
+        trace.push(t!(l, "Weighted score below 50", "加权分低于 50"));
         Authenticity::Suspicious
     };
 
@@ -559,7 +711,11 @@ pub fn decide(
     };
     if coverage_gap > 0.05 {
         confidence -= 0.15;
-        trace.push("因覆盖缺口降低置信度".into());
+        trace.push(t!(
+            l,
+            "Confidence lowered because of the coverage gap",
+            "因覆盖缺口降低置信度"
+        ));
     }
     if !gates.is_empty() {
         // Gates are the least ambiguous evidence we have.
@@ -575,7 +731,7 @@ pub fn decide(
         }
     }
     for r in &reverse {
-        signals.push(format!("逆向信号：{r}"));
+        signals.push(t!(l, "Reverse-channel signal: {r}", "逆向信号：{r}"));
     }
 
     Verdict {
@@ -594,6 +750,8 @@ pub fn decide(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const L: Lang = Lang::En;
     use crate::protocol::Protocol;
 
     fn p(id: &str, g: Group, s: Status, w: u32) -> ProbeResult {
@@ -635,9 +793,9 @@ mod tests {
     fn silent_fallback_trips_a_hard_gate() {
         let mut r = p("invalid_model", Group::Contract, Status::Fail, 3);
         r = r.metric("silent_fallback", true);
-        let gates = hard_gates(&[r], &Identity::default());
+        let gates = hard_gates(&[r], &Identity::default(), L);
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].name, "静默 fallback");
+        assert_eq!(gates[0].name, "Silent fallback");
     }
 
     #[test]
@@ -646,13 +804,13 @@ mod tests {
             tier_severity: 2,
             ..Default::default()
         };
-        assert_eq!(hard_gates(&[], &id2).len(), 1);
+        assert_eq!(hard_gates(&[], &id2, L).len(), 1);
         let id1 = Identity {
             tier_severity: 1,
             ..Default::default()
         };
         assert!(
-            hard_gates(&[], &id1).is_empty(),
+            hard_gates(&[], &id1, L).is_empty(),
             "one tier apart is within sampling noise and must not accuse"
         );
     }
@@ -661,19 +819,19 @@ mod tests {
     fn reverse_signals_only_count_count_tokens_for_anthropic() {
         let r = p("token_recount", Group::Billing, Status::Pass, 1).metric("authoritative", false);
         assert!(
-            reverse_signals(std::slice::from_ref(&r), Protocol::Anthropic)
+            reverse_signals(std::slice::from_ref(&r), Protocol::Anthropic, L)
                 .0
                 .iter()
                 .any(|s| s.contains("count_tokens"))
         );
         // OpenAI has no such route, so its absence is not evidence of anything.
-        assert!(reverse_signals(&[r], Protocol::OpenAI).0.is_empty());
+        assert!(reverse_signals(&[r], Protocol::OpenAI, L).0.is_empty());
     }
 
     #[test]
     fn two_reverse_signals_outrank_a_vendor_label() {
         let sig = ChannelSignature {
-            label: "Anthropic 官方".into(),
+            key: crate::probes::channel::ANTHROPIC_OFFICIAL.into(),
             ..Default::default()
         };
         assert_eq!(classify_channel(&[], &sig, 0.0), Channel::Official);
@@ -685,7 +843,7 @@ mod tests {
     #[test]
     fn unknown_vendor_with_official_headers_reads_as_subscription() {
         let sig = ChannelSignature {
-            label: "未知代理".into(),
+            key: crate::probes::channel::UNKNOWN_PROXY.into(),
             ..Default::default()
         };
         let with_headers = vec![p("official_headers", Group::Channel, Status::Pass, 1)];
@@ -703,7 +861,7 @@ mod tests {
         let results = vec![p("self_id", Group::Identity, Status::Fail, 2)
             .metric("observed_family", "openai")
             .metric("marker_hits", 1)];
-        let id = build_identity(&results, "claude-opus-4-5");
+        let id = build_identity(&results, "claude-opus-4-5", L);
         assert!(id.family_confidence < 0.35);
         assert_eq!(id.status, IdentityStatus::Ambiguous);
     }
@@ -716,7 +874,7 @@ mod tests {
                 .metric("marker_hits", 3),
             p("meta_creator", Group::Identity, Status::Pass, 1).metric("observed_family", "openai"),
         ];
-        let id = build_identity(&results, "claude-opus-4-5");
+        let id = build_identity(&results, "claude-opus-4-5", L);
         assert_eq!(id.observed_family.as_deref(), Some("openai"));
         assert!(id.family_confidence >= 0.5);
         assert_eq!(id.status, IdentityStatus::FamilyMismatch);
@@ -730,9 +888,9 @@ mod tests {
                 .metric("marker_hits", 3),
             p("meta_creator", Group::Identity, Status::Pass, 1).metric("observed_family", "openai"),
         ];
-        let id = build_identity(&results, "claude-opus-4-5");
+        let id = build_identity(&results, "claude-opus-4-5", L);
         assert!(id.family_confidence < 0.7);
-        assert!(id.evidence.iter().any(|e| e.contains("不一致")));
+        assert!(id.evidence.iter().any(|e| e.contains("disagreeing")));
     }
 
     #[test]
@@ -742,9 +900,9 @@ mod tests {
             .metric("fit", 0.8)
             .metric("tier_severity", 2)
             .metric("margin", 0.01)];
-        let id = build_identity(&results, "claude-opus-4-5");
+        let id = build_identity(&results, "claude-opus-4-5", L);
         assert_eq!(id.tier_severity, 0, "an overlapping margin must not accuse");
-        assert!(hard_gates(&results, &id).is_empty());
+        assert!(hard_gates(&results, &id, L).is_empty());
     }
 
     #[test]
@@ -754,7 +912,7 @@ mod tests {
             .metric("fit", 0.8)
             .metric("tier_severity", 2)
             .metric("margin", 0.3)];
-        let id = build_identity(&results, "claude-opus-4-5");
+        let id = build_identity(&results, "claude-opus-4-5", L);
         assert_eq!(id.tier_severity, 2);
         assert_eq!(id.status, IdentityStatus::TierMismatch);
     }
@@ -768,6 +926,7 @@ mod tests {
             &BillingAudit::default(),
             &ChannelSignature::default(),
             Protocol::Anthropic,
+            L,
         );
         assert_eq!(v.authenticity, Authenticity::Inconclusive);
     }
@@ -790,7 +949,7 @@ mod tests {
             ..Default::default()
         };
         let sig = ChannelSignature {
-            label: "Anthropic 官方".into(),
+            key: crate::probes::channel::ANTHROPIC_OFFICIAL.into(),
             ..Default::default()
         };
         let v = decide(
@@ -799,6 +958,7 @@ mod tests {
             &billing,
             &sig,
             Protocol::Anthropic,
+            L,
         );
         assert_eq!(v.authenticity, Authenticity::Authentic);
         assert_eq!(v.channel, Channel::Official);
@@ -819,7 +979,7 @@ mod tests {
             }
         }
         let sig = ChannelSignature {
-            label: "OpenRouter".into(),
+            key: "OpenRouter".into(),
             ..Default::default()
         };
         let v = decide(
@@ -831,6 +991,7 @@ mod tests {
             },
             &sig,
             Protocol::Anthropic,
+            L,
         );
         assert_eq!(v.authenticity, Authenticity::ThirdParty);
         assert_eq!(v.channel, Channel::Proxy);
@@ -851,6 +1012,7 @@ mod tests {
             &BillingAudit::default(),
             &ChannelSignature::default(),
             Protocol::Anthropic,
+            L,
         );
         assert_eq!(v.authenticity, Authenticity::Inconclusive);
         assert!(v.coverage_gap > 0.25);
@@ -864,6 +1026,7 @@ mod tests {
             &BillingAudit::default(),
             &ChannelSignature::default(),
             Protocol::Anthropic,
+            L,
         );
         assert!((0.15..=0.95).contains(&v.confidence), "{}", v.confidence);
     }
@@ -873,6 +1036,8 @@ mod tests {
 mod reverse_weight_tests {
     use super::*;
     use crate::protocol::Protocol;
+
+    const L: Lang = Lang::En;
 
     fn p(id: &str, s: Status) -> ProbeResult {
         let mut r = ProbeResult::new(id, id, Group::Contract);
@@ -888,7 +1053,7 @@ mod reverse_weight_tests {
             p("error_envelope", Status::Warn),
             p("official_headers", Status::Warn),
         ];
-        let (list, weight) = reverse_signals(&results, Protocol::OpenAI);
+        let (list, weight) = reverse_signals(&results, Protocol::OpenAI, L);
         assert_eq!(list.len(), 2);
         assert!(weight < REVERSE_THRESHOLD, "weight was {weight}");
     }
@@ -899,7 +1064,7 @@ mod reverse_weight_tests {
             p("usage_present", Status::Fail),
             p("max_tokens", Status::Fail),
         ];
-        let (_, weight) = reverse_signals(&results, Protocol::OpenAI);
+        let (_, weight) = reverse_signals(&results, Protocol::OpenAI, L);
         assert!(weight >= REVERSE_THRESHOLD, "weight was {weight}");
     }
 
@@ -910,7 +1075,7 @@ mod reverse_weight_tests {
             p("error_envelope", Status::Warn),
             p("official_headers", Status::Warn),
         ];
-        let (_, weight) = reverse_signals(&results, Protocol::OpenAI);
+        let (_, weight) = reverse_signals(&results, Protocol::OpenAI, L);
         assert!(weight >= REVERSE_THRESHOLD, "weight was {weight}");
     }
 }

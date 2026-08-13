@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! llm-verify — black-box verification for LLM API endpoints.
 
+#[macro_use]
+mod i18n;
+
 mod client;
 mod html;
 mod pricing;
@@ -25,7 +28,8 @@ use std::time::Duration;
 #[command(
     name = "llm-verify",
     version,
-    about = "检测你正在用的 LLM 端点：模型真假、计费掺水、中转来源、性能与降智",
+    about = "Verify the LLM endpoint you are actually using: model authenticity, \
+              billing inflation, relay provenance, performance and silent downgrades",
     long_about = None,
     disable_help_subcommand = true
 )]
@@ -38,66 +42,73 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// The CLI parses one command per process, so the size gap between variants
+// costs a few hundred bytes once — boxing would only add an indirection.
+#[allow(clippy::large_enum_variant)]
 enum Command {
-    /// 检测一个端点（默认命令）
+    /// Verify an endpoint (the default command)
     Run(RunArgs),
-    /// 把 llm-verify 技能安装到各 AI 工具
+    /// Install the llm-verify skill into your AI coding tools
     InstallSkill(skill::InstallArgs),
-    /// 列出各 AI 工具的技能安装位置
+    /// List where the skill would be installed for each tool
     SkillTargets,
 }
 
 #[derive(clap::Args, Clone, Default)]
 struct RunArgs {
-    /// 端点 Base URL，例如 https://api.anthropic.com
+    /// Endpoint base URL, e.g. https://api.anthropic.com
     #[arg(long)]
     base_url: Option<String>,
 
-    /// API Key
+    /// API key
     #[arg(long)]
     api_key: Option<String>,
 
-    /// 要检测的模型 ID
+    /// Model ID to verify
     #[arg(long)]
     model: Option<String>,
 
-    /// 协议：anthropic 或 openai。不填则自动推断
+    /// Protocol: anthropic or openai. Inferred from the URL and model if unset
     #[arg(long)]
     protocol: Option<String>,
 
-    /// 供应商宣称的模型名，默认与 --model 相同
+    /// The model the vendor claims to serve. Defaults to --model
     #[arg(long)]
     claimed_model: Option<String>,
 
-    /// 检测深度：fast / balanced / forensic
+    /// Report language: en / zh. Defaults to the system locale, then English.
+    #[arg(long)]
+    lang: Option<String>,
+
+    /// Probe depth: fast / balanced / forensic
     #[arg(long, default_value = "balanced")]
     depth: String,
 
-    /// HTML 报告输出路径。传目录则自动生成文件名
+    /// HTML report path. Pass a directory to auto-name the file
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
 
-    /// 同时写出 JSON 报告
+    /// Also write a JSON report
     #[arg(long)]
     json: Option<PathBuf>,
 
-    /// 单个请求超时（秒）
+    /// Per-request timeout, in seconds
     #[arg(long, default_value_t = 120)]
     timeout: u64,
 
-    /// 从指定 .env 读取配置
+    /// Read configuration from this .env file
     #[arg(long, default_value = ".env")]
     env_file: PathBuf,
 
-    /// 不输出逐项进度
+    /// Suppress per-probe progress output
     #[arg(long)]
     quiet: bool,
 
-    /// 关闭彩色输出
+    /// Disable coloured output
     #[arg(long)]
     no_color: bool,
 
-    /// 生成报告后不自动打开浏览器
+    /// Do not open the report in a browser
     #[arg(long)]
     no_open: bool,
 }
@@ -105,7 +116,7 @@ struct RunArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::InstallSkill(args)) => skill::install(&args),
+        Some(Command::InstallSkill(args)) => skill::install(&args, i18n::Lang::from_env(None)),
         Some(Command::SkillTargets) => skill::list_targets(),
         Some(Command::Run(args)) => run_blocking(args),
         None => run_blocking(cli.run),
@@ -178,6 +189,8 @@ fn infer_protocol(base_url: &str, model: &str) -> Protocol {
 
 async fn run(args: RunArgs) -> Result<i32> {
     let env_pairs = load_env_file(&args.env_file);
+    // Errors below are user-facing, so resolve the language before them.
+    let lang_early = i18n::Lang::from_env(args.lang.as_deref());
 
     let base_url = args
         .base_url
@@ -195,7 +208,11 @@ async fn run(args: RunArgs) -> Result<i32> {
             )
         })
         .ok_or_else(|| {
-            anyhow!("缺少 --base-url（也可用 LLM_VERIFY_BASE_URL 环境变量或 .env 提供）")
+            anyhow!(t!(
+                lang_early,
+                "missing --base-url (or set LLM_VERIFY_BASE_URL, or put it in .env)",
+                "缺少 --base-url（也可用 LLM_VERIFY_BASE_URL 环境变量或 .env 提供）"
+            ))
         })?;
 
     let api_key = args
@@ -218,18 +235,30 @@ async fn run(args: RunArgs) -> Result<i32> {
         .model
         .clone()
         .or_else(|| pick(&env_pairs, &["LLM_VERIFY_MODEL", "VERIFY_MODEL"]))
-        .ok_or_else(|| anyhow!("缺少 --model（也可用 LLM_VERIFY_MODEL 环境变量或 .env 提供）"))?;
+        .ok_or_else(|| {
+            anyhow!(t!(
+                lang_early,
+                "missing --model (or set LLM_VERIFY_MODEL, or put it in .env)",
+                "缺少 --model（也可用 LLM_VERIFY_MODEL 环境变量或 .env 提供）"
+            ))
+        })?;
 
     let protocol = match args
         .protocol
         .clone()
         .or_else(|| pick(&env_pairs, &["LLM_VERIFY_PROTOCOL", "VERIFY_PROTOCOL"]))
     {
-        Some(p) => Protocol::parse(&p)
-            .ok_or_else(|| anyhow!("无法识别的协议 {p}，可选：anthropic / openai"))?,
+        Some(p) => Protocol::parse(&p).ok_or_else(|| {
+            anyhow!(t!(
+                lang_early,
+                "unrecognised protocol {p}; expected anthropic or openai",
+                "无法识别的协议 {p}，可选：anthropic / openai"
+            ))
+        })?,
         None => infer_protocol(&base_url, &model),
     };
 
+    let lang = lang_early;
     let depth = Depth::parse(&args.depth).ok_or_else(|| {
         anyhow!(
             "无法识别的深度 {}，可选：fast / balanced / forensic",
@@ -254,23 +283,23 @@ async fn run(args: RunArgs) -> Result<i32> {
     let t0 = util::now_ms();
 
     if !args.quiet {
-        term::banner(&endpoint, depth, &claimed_model, use_color);
+        term::banner(&endpoint, depth, &claimed_model, lang, use_color);
     }
 
     let client = Client::new(endpoint.clone())?;
-    let ctx = Ctx::new(client, depth, claimed_model.clone());
+    let ctx = Ctx::new(client, depth, lang, claimed_model.clone());
 
     let mut on_progress = |r: &report::ProbeResult, i: usize, total: usize| {
         if !args.quiet {
-            term::progress_line(r, i, total, use_color);
+            term::progress_line(r, i, total, lang, use_color);
         }
     };
     let results = probes::run_all(&ctx, &mut on_progress).await;
 
-    let identity = verdict::build_identity(&results, &claimed_model);
-    let billing = verdict::build_billing(&results, &model);
-    let channel = verdict::build_channel(&results);
-    let v = verdict::decide(&results, &identity, &billing, &channel, protocol);
+    let identity = verdict::build_identity(&results, &claimed_model, lang);
+    let billing = verdict::build_billing(&results, &model, lang);
+    let channel = verdict::build_channel(&results, lang);
+    let v = verdict::decide(&results, &identity, &billing, &channel, protocol, lang);
     let perf = probes::perf::summarize(&ctx.perf.borrow());
 
     let skipped = results
@@ -281,6 +310,7 @@ async fn run(args: RunArgs) -> Result<i32> {
 
     let rep = Report {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        lang,
         started_at,
         finished_at: util::iso8601_utc(),
         duration_ms: (util::now_ms() - t0) as u64,
@@ -309,7 +339,11 @@ async fn run(args: RunArgs) -> Result<i32> {
         let name = default_report_name(&rep).replace(".html", ".json");
         let written = write_out(path, json.as_bytes(), &name)?;
         if !args.quiet {
-            println!("  JSON 报告 : {}", written.display());
+            println!(
+                "  {} : {}",
+                ts!(lang, "JSON report", "JSON 报告"),
+                written.display()
+            );
         }
     }
 
@@ -322,7 +356,11 @@ async fn run(args: RunArgs) -> Result<i32> {
     let html = html::render(&rep);
     let written = write_out(&html_path, html.as_bytes(), &default_report_name(&rep))?;
     if !args.quiet {
-        println!("  HTML 报告 : {}", written.display());
+        println!(
+            "  {} : {}",
+            ts!(lang, "HTML report", "HTML 报告"),
+            written.display()
+        );
         if !args.no_open {
             open_in_browser(&written);
         }
@@ -353,10 +391,11 @@ fn write_out(path: &Path, bytes: &[u8], default_name: &str) -> Result<PathBuf> {
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("无法创建目录 {}", parent.display()))?;
+                .with_context(|| format!("could not create directory {}", parent.display()))?;
         }
     }
-    std::fs::write(&target, bytes).with_context(|| format!("无法写入 {}", target.display()))?;
+    std::fs::write(&target, bytes)
+        .with_context(|| format!("could not write {}", target.display()))?;
     std::fs::canonicalize(&target).or(Ok(target))
 }
 
@@ -454,6 +493,7 @@ mod tests {
     fn test_report(host: &str) -> Report {
         Report {
             tool_version: "0".into(),
+            lang: i18n::Lang::En,
             started_at: String::new(),
             finished_at: String::new(),
             duration_ms: 0,

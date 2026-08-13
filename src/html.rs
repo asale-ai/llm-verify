@@ -6,6 +6,7 @@
 //! later. Charts are hand-built SVG with CSS animation rather than a charting
 //! library, which keeps the artefact under a few hundred kilobytes.
 
+use crate::i18n::Lang;
 use crate::report::*;
 use crate::util::html_escape as esc;
 use std::fmt::Write;
@@ -254,14 +255,17 @@ fn stat_class(pct: f64) -> &'static str {
 
 pub fn render(rep: &Report) -> String {
     let mut h = String::with_capacity(96 * 1024);
+    let l = rep.lang;
 
     let _ = write!(
         h,
         r#"<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="report-language" content="{lang}">
 <title>llm-verify · {host}</title>
 <style>{CSS}</style>
 "#,
+        lang = l.html_lang(),
         host = esc(&rep.host),
     );
 
@@ -278,7 +282,7 @@ pub fn render(rep: &Report) -> String {
     channel_panel(&mut h, rep);
     probe_table(&mut h, rep);
     trace_panel(&mut h, rep);
-    limits_panel(&mut h);
+    limits_panel(&mut h, l);
     let _ = write!(h, "</main>");
 
     footer(&mut h, rep);
@@ -297,18 +301,23 @@ const ANIM_STAGGER: &str = r#"<style>
 </style>"#;
 
 fn masthead(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let _ = write!(
         h,
         r#"<header class="mast"><div class="wrap">
 <div class="brand"><span class="name">llm-verify</span><span class="ver">v{ver} · {started}</span></div>
 <div class="target">
-<div><b>端点</b><span>{base}</span></div>
-<div><b>模型</b><span>{model}</span></div>
-<div><b>协议</b><span>{proto}</span></div>
-<div><b>深度</b><span>{depth}</span></div>
+<div><b>{k_ep}</b><span>{base}</span></div>
+<div><b>{k_model}</b><span>{model}</span></div>
+<div><b>{k_proto}</b><span>{proto}</span></div>
+<div><b>{k_depth}</b><span>{depth}</span></div>
 </div></div></header>"#,
         ver = esc(&rep.tool_version),
         started = esc(&rep.started_at),
+        k_ep = ts!(l, "Endpoint", "端点"),
+        k_model = ts!(l, "Model", "模型"),
+        k_proto = ts!(l, "Protocol", "协议"),
+        k_depth = ts!(l, "Depth", "深度"),
         base = esc(&rep.base_url),
         model = esc(&rep.model),
         proto = rep.protocol,
@@ -317,6 +326,7 @@ fn masthead(h: &mut String, rep: &Report) {
 }
 
 fn hero(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let v = &rep.verdict;
     // r=64 ring on a 168px box; circumference drives the draw animation.
     const R: f64 = 64.0;
@@ -327,7 +337,7 @@ fn hero(h: &mut String, rep: &Report) {
         h,
         r#"<div class="wrap"><div class="hero">
 <div class="donut">
-<svg width="168" height="168" viewBox="0 0 168 168" role="img" aria-label="综合评分 {score:.1} 分">
+<svg width="168" height="168" viewBox="0 0 168 168" role="img" aria-label="{aria}">
 <circle class="donut-track" cx="84" cy="84" r="{r}"></circle>
 <circle class="donut-ring" cx="84" cy="84" r="{r}"
         style="--circ:{circ:.2};--final:{fin:.2};stroke:{col}"></circle>
@@ -339,62 +349,96 @@ fn hero(h: &mut String, rep: &Report) {
 <h1>{host}</h1>
 <p>{vdesc}</p>
 <div class="hero-meta">
-<span class="pill"><b>来源</b> {chan}</span>
-<span class="pill"><b>身份</b> {ident}</span>
-<span class="pill"><b>置信度</b> {conf:.0}%</span>
-<span class="pill"><b>探针</b> {pass} 通过 / {warn} 警告 / {fail} 失败</span>
-<span class="pill"><b>请求</b> {reqs} 次 · {secs:.1}s</span>
+<span class="pill"><b>{k_origin}</b> {chan}</span>
+<span class="pill"><b>{k_ident}</b> {ident}</span>
+<span class="pill"><b>{k_conf}</b> {conf:.0}%</span>
+<span class="pill"><b>{k_probes}</b> {probes}</span>
+<span class="pill"><b>{k_reqs}</b> {reqs}</span>
 </div>
 </div></div></div>"#,
+        aria = esc(&t!(
+            l,
+            "Overall score {score:.1} out of 100",
+            "综合评分 {score:.1} 分",
+            score = v.score
+        )),
         r = R,
         circ = circ,
         fin = final_offset,
         col = score_colour(v.score),
         score = v.score,
         vcss = v.authenticity.css(),
-        vlabel = v.authenticity.label_zh(),
+        vlabel = esc(v.authenticity.label(l)),
         host = esc(&rep.host),
-        vdesc = esc(v.authenticity.desc_zh()),
-        chan = v.channel.label_zh(),
-        ident = rep.identity.status.label_zh(),
+        vdesc = esc(v.authenticity.desc(l)),
+        k_origin = ts!(l, "Origin", "来源"),
+        chan = esc(v.channel.label(l)),
+        k_ident = ts!(l, "Identity", "身份"),
+        ident = esc(rep.identity.status.label(l)),
+        k_conf = ts!(l, "Confidence", "置信度"),
         conf = v.confidence * 100.0,
-        pass = rep.count(Status::Pass),
-        warn = rep.count(Status::Warn),
-        fail = rep.count(Status::Fail),
-        reqs = rep.request_count,
-        secs = rep.duration_ms as f64 / 1000.0,
+        k_probes = ts!(l, "Probes", "探针"),
+        probes = esc(&t!(
+            l,
+            "{} passed / {} warned / {} failed",
+            "{} 通过 / {} 警告 / {} 失败",
+            rep.count(Status::Pass),
+            rep.count(Status::Warn),
+            rep.count(Status::Fail)
+        )),
+        k_reqs = ts!(l, "Requests", "请求"),
+        reqs = esc(&t!(
+            l,
+            "{} · {:.1}s",
+            "{} 次 · {:.1}s",
+            rep.request_count,
+            rep.duration_ms as f64 / 1000.0
+        )),
     );
 }
 
 fn gates(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let gates = &rep.verdict.hard_gate_hits;
     if gates.is_empty() {
         return;
     }
     let _ = write!(
         h,
-        r#"<div class="gates rise"><header>⛔ 硬门禁命中 {n} 项 —— 加权分再高也不能忽略</header><ul>"#,
-        n = gates.len()
+        r#"<div class="gates rise"><header>⛔ {}</header><ul>"#,
+        esc(&t!(
+            l,
+            "{n} hard gate(s) tripped — no weighted score can excuse these",
+            "硬门禁命中 {n} 项 —— 加权分再高也不能忽略",
+            n = gates.len()
+        ))
     );
     for g in gates {
         let _ = write!(
             h,
-            "<li><b>{}</b> — {}<br><span style=\"color:var(--muted);font-size:12.5px\">来自探针 {}</span></li>",
+            r#"<li><b>{}</b> — {}<br><span style="color:var(--muted);font-size:12.5px">{}</span></li>"#,
             esc(&g.name),
             esc(&g.reason),
-            esc(&g.probe)
+            esc(&t!(l, "from probe {}", "来自探针 {}", g.probe))
         );
     }
     let _ = write!(h, "</ul></div>");
 }
 
 fn key_stats(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let b = &rep.billing;
     let p = &rep.perf;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>关键指标</h2>
-<span class="hint">一眼看懂这个端点当前的状态</span></div><div class="grid g4">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="grid g4">"#,
+        esc(ts!(l, "Key numbers", "关键指标")),
+        esc(ts!(
+            l,
+            "The state of this endpoint at a glance",
+            "一眼看懂这个端点当前的状态"
+        ))
     );
 
     // Billing ratio.
@@ -407,14 +451,34 @@ fn key_stats(h: &mut String, rep: &Report) {
             "good"
         };
         (
-            format!("{:.2}×", b.input_ratio),
+            format!("{:.2}x", b.input_ratio),
             cls,
-            format!("计费 {} / 实测 {} token", b.billed_input, b.honest_input),
+            t!(
+                l,
+                "billed {} / actual {} tokens",
+                "计费 {} / 实测 {} token",
+                b.billed_input,
+                b.honest_input
+            ),
         )
     } else {
-        ("—".to_string(), "", "没有可对照的独立计数".to_string())
+        (
+            "—".to_string(),
+            "",
+            t!(
+                l,
+                "no independent count to compare against",
+                "没有可对照的独立计数"
+            ),
+        )
     };
-    stat_tile(h, "计费倍率", &ratio_txt, ratio_cls, &ratio_sub);
+    stat_tile(
+        h,
+        ts!(l, "Billing ratio", "计费倍率"),
+        &ratio_txt,
+        ratio_cls,
+        &ratio_sub,
+    );
 
     let ttft = if p.ttft_p50 > 0.0 {
         (
@@ -426,12 +490,24 @@ fn key_stats(h: &mut String, rep: &Report) {
             } else {
                 "bad"
             },
-            format!("P95 {:.0}ms · {} 个样本", p.ttft_p95, p.ttft_ms.len()),
+            t!(
+                l,
+                "P95 {:.0}ms · {} samples",
+                "P95 {:.0}ms · {} 个样本",
+                p.ttft_p95,
+                p.ttft_ms.len()
+            ),
         )
     } else {
-        ("—".into(), "", "没有流式样本".into())
+        ("—".into(), "", t!(l, "no streamed samples", "没有流式样本"))
     };
-    stat_tile(h, "首字延迟 P50", &ttft.0, ttft.1, &ttft.2);
+    stat_tile(
+        h,
+        ts!(l, "TTFT P50", "首字延迟 P50"),
+        &ttft.0,
+        ttft.1,
+        &ttft.2,
+    );
 
     let tps = if p.tps_mean > 0.0 {
         (
@@ -440,24 +516,24 @@ fn key_stats(h: &mut String, rep: &Report) {
             format!(
                 "tok/s · {}",
                 match crate::probes::perf::tier_band(p.tps_mean) {
-                    "large" => "偏大模型速度",
-                    "small" => "偏小模型速度",
-                    _ => "中间档",
+                    "large" => t!(l, "large-model speed", "偏大模型速度"),
+                    "small" => t!(l, "small-model speed", "偏小模型速度"),
+                    _ => t!(l, "in between", "中间档"),
                 }
             ),
         )
     } else {
         ("—".into(), "", "tok/s".into())
     };
-    stat_tile(h, "生成吞吐", &tps.0, tps.1, &tps.2);
+    stat_tile(h, ts!(l, "Throughput", "生成吞吐"), &tps.0, tps.1, &tps.2);
 
     let cov = (1.0 - rep.verdict.coverage_gap) * 100.0;
     stat_tile(
         h,
-        "探针覆盖率",
+        ts!(l, "Probe coverage", "探针覆盖率"),
         &format!("{cov:.0}%"),
         stat_class(cov),
-        &format!("{} 项未执行", rep.skipped.len()),
+        &t!(l, "{} did not run", "{} 项未执行", rep.skipped.len()),
     );
 
     let _ = write!(h, "</div></section>");
@@ -475,10 +551,17 @@ fn stat_tile(h: &mut String, label: &str, value: &str, cls: &str, sub: &str) {
 }
 
 fn group_scores(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>分组得分</h2>
-<span class="hint">问题出在哪一层，一眼定位</span></div><div class="card"><div class="bars">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="card"><div class="bars">"#,
+        esc(ts!(l, "Scores by group", "分组得分")),
+        esc(ts!(
+            l,
+            "Locate which layer the problems are in",
+            "问题出在哪一层，一眼定位"
+        ))
     );
     for g in Group::ALL {
         let Some(pct) = rep.verdict.group_scores.get(g.key()) else {
@@ -489,8 +572,8 @@ fn group_scores(h: &mut String, rep: &Report) {
             r#"<div class="bar-row"><div class="lbl" title="{hint}">{label}</div>
 <div class="bar-track"><div class="bar-fill" style="--w:{pct:.1}%;background:{col}"></div></div>
 <div class="num">{pct:.1}</div></div>"#,
-            hint = esc(g.blurb_zh()),
-            label = esc(g.label_zh()),
+            hint = esc(g.blurb(l)),
+            label = esc(g.label(l)),
             pct = pct,
             col = score_colour(*pct),
         );
@@ -499,50 +582,102 @@ fn group_scores(h: &mut String, rep: &Report) {
 }
 
 fn identity_panel(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let id = &rep.identity;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>模型身份</h2>
-<span class="hint">背后跑的是不是它声称的那个模型</span></div><div class="grid g2">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="grid g2">"#,
+        esc(ts!(l, "Model identity", "模型身份")),
+        esc(ts!(
+            l,
+            "Is the model behind this the one that was sold?",
+            "背后跑的是不是它声称的那个模型"
+        ))
     );
 
     // Claim vs observation.
     let _ = write!(
         h,
-        r#"<div class="card"><h3>宣称 vs 实测</h3>
+        r#"<div class="card"><h3>{title}</h3>
 <div class="cmp">
-<div class="cmp-row"><div class="top"><span class="k">宣称模型</span><span class="n">{claimed}</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">宣称家族 / 档位</span><span class="n">{cf} / {ct}</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">实测家族</span><span class="n">{of}（信心 {fc:.0}%）</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">实测档位</span><span class="n">{et}（拟合 {tc:.2}）</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">档位判定依据</span><span class="n">{tq} 道能力题 · 领先次优 {tm:.3}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k1}</span><span class="n">{claimed}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k2}</span><span class="n">{cf} / {ct}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k3}</span><span class="n">{of}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k4}</span><span class="n">{et}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k5}</span><span class="n">{basis}</span></div></div>
 </div>
 <div class="ratio-note {ncls}" style="margin-top:14px">{istatus}</div>{thin}
 </div>"#,
+        title = esc(ts!(l, "Claimed vs measured", "宣称 vs 实测")),
+        k1 = esc(ts!(l, "Claimed model", "宣称模型")),
         claimed = esc(&id.claimed_model),
-        cf = esc(id.claimed_family.as_deref().unwrap_or("未知")),
-        ct = esc(id.claimed_tier.as_deref().unwrap_or("未知")),
-        of = esc(id.observed_family.as_deref().unwrap_or("未识别")),
-        fc = id.family_confidence * 100.0,
-        et = esc(id.estimated_tier.as_deref().unwrap_or("未测出")),
-        tc = id.tier_confidence,
-        tq = id.tier_questions,
-        tm = id.tier_margin,
+        k2 = esc(ts!(l, "Claimed family / tier", "宣称家族 / 档位")),
+        cf = esc(id
+            .claimed_family
+            .as_deref()
+            .unwrap_or(ts!(l, "unknown", "未知"))),
+        ct = esc(id
+            .claimed_tier
+            .as_deref()
+            .unwrap_or(ts!(l, "unknown", "未知"))),
+        k3 = esc(ts!(l, "Measured family", "实测家族")),
+        of = esc(&t!(
+            l,
+            "{} (confidence {:.0}%)",
+            "{}（信心 {:.0}%）",
+            id.observed_family
+                .as_deref()
+                .unwrap_or(ts!(l, "unidentified", "未识别")),
+            id.family_confidence * 100.0
+        )),
+        k4 = esc(ts!(l, "Measured tier", "实测档位")),
+        et = esc(&t!(
+            l,
+            "{} (fit {:.2})",
+            "{}（拟合 {:.2}）",
+            id.estimated_tier
+                .as_deref()
+                .unwrap_or(ts!(l, "not measured", "未测出")),
+            id.tier_confidence
+        )),
+        k5 = esc(ts!(l, "Tier verdict rests on", "档位判定依据")),
+        basis = esc(&t!(
+            l,
+            "{} questions · beat runner-up by {:.3}",
+            "{} 道能力题 · 领先次优 {:.3}",
+            id.tier_questions,
+            id.tier_margin
+        )),
         ncls = id.status.css(),
-        istatus = esc(id.status.label_zh()),
+        istatus = esc(id.status.label(l)),
         thin = if id.tier_questions > 0 && id.tier_questions < 9 {
-            r#"<div style="margin-top:10px;font-size:12.5px;color:var(--muted)">档位判定的样本量偏小，相邻档位之间可能因单题得失而摆动。需要更有把握的结论请用 <code>--depth forensic</code> 重跑。</div>"#
+            format!(
+                r#"<div style="margin-top:10px;font-size:12.5px;color:var(--muted)">{}</div>"#,
+                t!(
+                    l,
+                    "The tier call rests on a thin sample; adjacent tiers can swing \
+                     on a single question. Re-run with <code>--depth forensic</code> \
+                     for a verdict that holds up.",
+                    "档位判定的样本量偏小，相邻档位之间可能因单题得失而摆动。需要更有把握的结论请用 <code>--depth forensic</code> 重跑。"
+                )
+            )
         } else {
-            ""
+            String::new()
         },
     );
 
     // Capability profile.
     let _ = write!(
         h,
-        r#"<div class="card"><h3>能力档位拟合</h3><div class="bars">"#
+        r#"<div class="card"><h3>{}</h3><div class="bars">"#,
+        esc(ts!(l, "Tier hypothesis fit", "能力档位拟合"))
     );
-    for (tier, label) in [("large", "旗舰档"), ("mid", "中档"), ("small", "轻量档")] {
+    for (tier, label) in [
+        ("large", ts!(l, "flagship", "旗舰档")),
+        ("mid", ts!(l, "mid", "中档")),
+        ("small", ts!(l, "light", "轻量档")),
+    ] {
         let score = id.tier_scores.get(tier).copied().unwrap_or(0.0);
         let is_best = id.estimated_tier.as_deref() == Some(tier);
         let _ = write!(
@@ -550,7 +685,7 @@ fn identity_panel(h: &mut String, rep: &Report) {
             r#"<div class="bar-row"><div class="lbl">{label}{mark}</div>
 <div class="bar-track"><div class="bar-fill" style="--w:{w:.1}%;background:{col}"></div></div>
 <div class="num">{score:.2}</div></div>"#,
-            label = label,
+            label = esc(label),
             mark = if is_best { " ●" } else { "" },
             w = score * 100.0,
             col = if is_best {
@@ -566,16 +701,21 @@ fn identity_panel(h: &mut String, rep: &Report) {
     if !id.accuracy_by_difficulty.is_empty() {
         let _ = write!(
             h,
-            r#"<h3 style="margin-top:16px">分难度正确率</h3><div class="bars">"#
+            r#"<h3 style="margin-top:16px">{}</h3><div class="bars">"#,
+            esc(ts!(l, "Accuracy by difficulty", "分难度正确率"))
         );
-        for (key, label) in [("easy", "简单"), ("medium", "中等"), ("hard", "困难")] {
+        for (key, label) in [
+            ("easy", ts!(l, "easy", "简单")),
+            ("medium", ts!(l, "medium", "中等")),
+            ("hard", ts!(l, "hard", "困难")),
+        ] {
             let acc = id.accuracy_by_difficulty.get(key).copied().unwrap_or(0.0);
             let _ = write!(
                 h,
                 r#"<div class="bar-row"><div class="lbl">{label}</div>
 <div class="bar-track"><div class="bar-fill" style="--w:{w:.0}%;background:{col}"></div></div>
 <div class="num">{w:.0}%</div></div>"#,
-                label = label,
+                label = esc(label),
                 w = acc * 100.0,
                 col = score_colour(acc * 100.0),
             );
@@ -587,7 +727,8 @@ fn identity_panel(h: &mut String, rep: &Report) {
     if !id.evidence.is_empty() {
         let _ = write!(
             h,
-            r#"<div class="card" style="grid-column:1/-1"><h3>身份证据</h3><ul class="ev">"#
+            r#"<div class="card" style="grid-column:1/-1"><h3>{}</h3><ul class="ev">"#,
+            esc(ts!(l, "Identity evidence", "身份证据"))
         );
         for e in &id.evidence {
             let _ = write!(h, "<li>{}</li>", esc(e));
@@ -598,27 +739,41 @@ fn identity_panel(h: &mut String, rep: &Report) {
 }
 
 fn billing_panel(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let b = &rep.billing;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>计量与计费</h2>
-<span class="hint">计费数字可信吗，有没有多收钱</span></div><div class="grid g2">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="grid g2">"#,
+        esc(ts!(l, "Metering & billing", "计量与计费")),
+        esc(ts!(
+            l,
+            "Are the token counts honest, or are you overcharged?",
+            "计费数字可信吗，有没有多收钱"
+        ))
     );
 
     // Billed vs honest bars, scaled to whichever is larger.
     let max = b.billed_input.max(b.honest_input).max(1) as f64;
     let _ = write!(
         h,
-        r#"<div class="card"><h3>输入 token：计费 vs 独立重算</h3><div class="cmp">
-<div class="cmp-row"><div class="top"><span class="k">端点计费</span><span class="n">{billed}</span></div>
+        r#"<div class="card"><h3>{title}</h3><div class="cmp">
+<div class="cmp-row"><div class="top"><span class="k">{k1}</span><span class="n">{billed}</span></div>
 <div class="bar-track"><div class="bar-fill" style="--w:{bw:.1}%;background:{bc}"></div></div></div>
-<div class="cmp-row"><div class="top"><span class="k">独立重算</span><span class="n">{honest}</span></div>
+<div class="cmp-row"><div class="top"><span class="k">{k2}</span><span class="n">{honest}</span></div>
 <div class="bar-track"><div class="bar-fill" style="--w:{hw:.1}%;background:var(--accent)"></div></div></div>
 </div>
 <div class="ratio-note {rcls}">{rtext}</div>
-<div style="margin-top:11px;font-size:12.5px;color:var(--muted)">对照方式：{method}</div>
+<div style="margin-top:11px;font-size:12.5px;color:var(--muted)">{method}</div>
 </div>"#,
+        title = esc(ts!(
+            l,
+            "Input tokens: billed vs independent recount",
+            "输入 token：计费 vs 独立重算"
+        )),
+        k1 = esc(ts!(l, "Endpoint billed", "端点计费")),
         billed = b.billed_input,
+        k2 = esc(ts!(l, "Independent recount", "独立重算")),
         honest = b.honest_input,
         bw = b.billed_input as f64 / max * 100.0,
         hw = b.honest_input as f64 / max * 100.0,
@@ -634,35 +789,59 @@ fn billing_panel(h: &mut String, rep: &Report) {
         } else {
             "ratio-ok"
         },
-        rtext = if b.honest_input == 0 {
-            "没有可对照的独立计数，无法给出倍率".to_string()
+        rtext = esc(&if b.honest_input == 0 {
+            t!(
+                l,
+                "No independent count to compare against, so no ratio can be given",
+                "没有可对照的独立计数，无法给出倍率"
+            )
         } else if b.input_ratio > 1.15 {
-            format!(
+            t!(
+                l,
+                "Billing ratio {:.2}x — roughly {:.0}% more than actual",
                 "计费倍率 {:.2}×——比实际多算了约 {:.0}%",
                 b.input_ratio,
                 (b.input_ratio - 1.0) * 100.0
             )
         } else {
-            format!("计费倍率 {:.2}×，在正常范围内", b.input_ratio)
-        },
-        method = esc(&b.method),
+            t!(
+                l,
+                "Billing ratio {:.2}x, within the normal range",
+                "计费倍率 {:.2}×，在正常范围内",
+                b.input_ratio
+            )
+        }),
+        method = esc(&t!(l, "Compared against: {}", "对照方式：{}", b.method)),
     );
 
     // Cost, or an explicit statement that no price was applied.
-    let _ = write!(h, r#"<div class="card"><h3>成本折算</h3>"#);
+    let _ = write!(
+        h,
+        r#"<div class="card"><h3>{}</h3>"#,
+        esc(ts!(l, "Cost", "成本折算"))
+    );
     if b.billed_cost_usd > 0.0 {
         let _ = write!(
             h,
             r#"<div class="cmp">
-<div class="cmp-row"><div class="top"><span class="k">按计费数字</span><span class="n">${bc:.6}</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">按实测数字</span><span class="n">${hc:.6}</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">差额</span><span class="n">${d:.6}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k1}</span><span class="n">${bc:.6}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k2}</span><span class="n">${hc:.6}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k3}</span><span class="n">${d:.6}</span></div></div>
 </div>
-<div style="margin-top:11px;font-size:12.5px;color:var(--muted)">{src}。金额只是本次几个探测请求的量级，用于说明倍率，不是月账单预估。</div>"#,
+<div style="margin-top:11px;font-size:12.5px;color:var(--muted)">{note}</div>"#,
+            k1 = esc(ts!(l, "At the billed counts", "按计费数字")),
             bc = b.billed_cost_usd,
+            k2 = esc(ts!(l, "At the measured counts", "按实测数字")),
             hc = b.honest_cost_usd,
+            k3 = esc(ts!(l, "Difference", "差额")),
             d = b.billed_cost_usd - b.honest_cost_usd,
-            src = esc(&b.pricing_source),
+            note = esc(&t!(
+                l,
+                "{}. These figures cover only this run's few probe requests — they \
+                 illustrate the ratio, they are not a monthly estimate.",
+                "{}。金额只是本次几个探测请求的量级，用于说明倍率，不是月账单预估。",
+                b.pricing_source
+            )),
         );
     } else {
         let _ = write!(
@@ -674,7 +853,8 @@ fn billing_panel(h: &mut String, rep: &Report) {
     if !b.anomalies.is_empty() {
         let _ = write!(
             h,
-            r#"<h3 style="margin-top:16px">计量异常</h3><ul class="ev">"#
+            r#"<h3 style="margin-top:16px">{}</h3><ul class="ev">"#,
+            esc(ts!(l, "Metering anomalies", "计量异常"))
         );
         for a in &b.anomalies {
             let _ = write!(h, "<li>{}</li>", esc(a));
@@ -685,45 +865,84 @@ fn billing_panel(h: &mut String, rep: &Report) {
 }
 
 fn perf_panel(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let p = &rep.perf;
     if p.samples == 0 {
         return;
     }
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>性能</h2>
-<span class="hint">首字延迟、吞吐与抖动，也是身份旁证</span></div><div class="grid g2">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="grid g2">"#,
+        esc(ts!(l, "Performance", "性能")),
+        esc(ts!(
+            l,
+            "Latency, throughput and jitter — also identity evidence",
+            "首字延迟、吞吐与抖动，也是身份旁证"
+        ))
     );
 
-    dist_chart(h, "首字延迟分布（ms）", &p.ttft_ms, "ms");
-    dist_chart(h, "端到端延迟分布（ms）", &p.latency_ms, "ms");
+    dist_chart(
+        h,
+        ts!(l, "Time to first token (ms)", "首字延迟分布（ms）"),
+        &p.ttft_ms,
+        "ms",
+        l,
+    );
+    dist_chart(
+        h,
+        ts!(l, "End-to-end latency (ms)", "端到端延迟分布（ms）"),
+        &p.latency_ms,
+        "ms",
+        l,
+    );
 
     let _ = write!(
         h,
-        r#"<div class="card" style="grid-column:1/-1"><h3>汇总</h3><div class="grid g4" style="gap:11px">"#
+        r#"<div class="card" style="grid-column:1/-1"><h3>{}</h3><div class="grid g4" style="gap:11px">"#,
+        esc(ts!(l, "Summary", "汇总"))
     );
     for (label, value) in [
-        ("TTFT P50", format!("{:.0} ms", p.ttft_p50)),
-        ("TTFT P95", format!("{:.0} ms", p.ttft_p95)),
-        ("延迟 P50", format!("{:.0} ms", p.latency_p50)),
-        ("延迟 P95", format!("{:.0} ms", p.latency_p95)),
-        ("平均吞吐", format!("{:.1} tok/s", p.tps_mean)),
-        ("变异系数", format!("{:.2}", p.latency_cv)),
-        ("采样数", format!("{}", p.samples)),
+        ("TTFT P50".to_string(), format!("{:.0} ms", p.ttft_p50)),
+        ("TTFT P95".to_string(), format!("{:.0} ms", p.ttft_p95)),
+        (
+            t!(l, "Latency P50", "延迟 P50"),
+            format!("{:.0} ms", p.latency_p50),
+        ),
+        (
+            t!(l, "Latency P95", "延迟 P95"),
+            format!("{:.0} ms", p.latency_p95),
+        ),
+        (
+            t!(l, "Mean throughput", "平均吞吐"),
+            format!("{:.1} tok/s", p.tps_mean),
+        ),
+        (
+            t!(l, "Coefficient of variation", "变异系数"),
+            format!("{:.2}", p.latency_cv),
+        ),
+        (t!(l, "Samples", "采样数"), format!("{}", p.samples)),
     ] {
         let _ = write!(
             h,
             r#"<div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">{}</div>
 <div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">{}</div></div>"#,
-            esc(label),
+            esc(&label),
             esc(&value)
         );
     }
     if p.latency_cv > 0.5 {
         let _ = write!(
             h,
-            r#"</div><div class="ratio-note ratio-hi" style="margin-top:14px">变异系数 {:.2} 偏高：同一端点的耗时分布分散，常见于后端轮询多个供应商或严重超卖。</div>"#,
-            p.latency_cv
+            r#"</div><div class="ratio-note ratio-hi" style="margin-top:14px">{}</div>"#,
+            esc(&t!(
+                l,
+                "A coefficient of variation of {:.2} is high: a scattered latency \
+                 distribution on one endpoint is typical of round-robin across \
+                 several providers, or heavy oversubscription.",
+                "变异系数 {:.2} 偏高：同一端点的耗时分布分散，常见于后端轮询多个供应商或严重超卖。",
+                p.latency_cv
+            ))
         );
     } else {
         let _ = write!(h, "</div>");
@@ -731,7 +950,7 @@ fn perf_panel(h: &mut String, rep: &Report) {
     let _ = write!(h, "</div></div></section>");
 }
 
-fn dist_chart(h: &mut String, title: &str, values: &[f64], unit: &str) {
+fn dist_chart(h: &mut String, title: &str, values: &[f64], unit: &str, l: Lang) {
     if values.is_empty() {
         return;
     }
@@ -754,39 +973,46 @@ fn dist_chart(h: &mut String, title: &str, values: &[f64], unit: &str) {
     }
     let _ = write!(
         h,
-        r#"</div><div class="dist-axis"><span>最小 {min:.0}{unit}</span><span>{n} 个样本</span><span>最大 {max:.0}{unit}</span></div></div>"#,
-        min = values.iter().cloned().fold(f64::INFINITY, f64::min),
-        max = max,
-        n = values.len(),
-        unit = unit,
+        r#"</div><div class="dist-axis"><span>{lo}</span><span>{n}</span><span>{hi}</span></div></div>"#,
+        lo = esc(&t!(
+            l,
+            "min {:.0}{unit}",
+            "最小 {:.0}{unit}",
+            values.iter().cloned().fold(f64::INFINITY, f64::min)
+        )),
+        n = esc(&t!(l, "{} samples", "{} 个样本", values.len())),
+        hi = esc(&t!(l, "max {max:.0}{unit}", "最大 {max:.0}{unit}")),
     );
 }
 
 fn channel_panel(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let c = &rep.channel;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>渠道来源</h2>
-<span class="hint">请求到达模型前经过了什么</span></div><div class="card">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="card">"#,
+        esc(ts!(l, "Channel provenance", "渠道来源")),
+        esc(ts!(
+            l,
+            "What the request passes through before it reaches the model",
+            "请求到达模型前经过了什么"
+        ))
     );
 
     let _ = write!(
         h,
-        r#"<div class="chain"><span class="hop you">你的请求</span>"#
+        r#"<div class="chain"><span class="hop you">{}</span>"#,
+        esc(ts!(l, "your request", "你的请求"))
     );
-    let hops: Vec<&String> = if c.all_hops.is_empty() {
-        Vec::new()
-    } else {
-        c.all_hops.iter().collect()
-    };
-    if hops.is_empty() {
+    if c.all_hops.is_empty() {
         let _ = write!(
             h,
             r#"<span class="arrow">→</span><span class="hop">{}</span>"#,
             esc(&c.display)
         );
     } else {
-        for hop in hops {
+        for hop in &c.all_hops {
             let _ = write!(
                 h,
                 r#"<span class="arrow">→</span><span class="hop">{}</span>"#,
@@ -796,26 +1022,35 @@ fn channel_panel(h: &mut String, rep: &Report) {
     }
     let _ = write!(
         h,
-        r#"<span class="arrow">→</span><span class="hop you">模型</span></div>"#
+        r#"<span class="arrow">→</span><span class="hop you">{}</span></div>"#,
+        esc(ts!(l, "model", "模型"))
     );
 
     let _ = write!(
         h,
         r#"<div class="cmp"><div class="cmp-row"><div class="top">
-<span class="k">识别结果</span><span class="n">{label}（{tier} 层信号，置信度 {conf:.0}%）</span></div></div>
-<div class="cmp-row"><div class="top"><span class="k">来源归类</span><span class="n">{chan}</span></div></div></div>
+<span class="k">{k1}</span><span class="n">{ident}</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">{k2}</span><span class="n">{chan}</span></div></div></div>
 <div style="margin-top:11px;font-size:13px;color:var(--ink-2)">{desc}</div>"#,
-        label = esc(&c.display),
-        tier = c.tier,
-        conf = c.confidence * 100.0,
-        chan = rep.verdict.channel.label_zh(),
-        desc = esc(rep.verdict.channel.desc_zh()),
+        k1 = esc(ts!(l, "Classified as", "识别结果")),
+        ident = esc(&t!(
+            l,
+            "{} (tier-{} signal, {:.0}% confidence)",
+            "{}（{} 层信号，置信度 {:.0}%）",
+            c.display,
+            c.tier,
+            c.confidence * 100.0
+        )),
+        k2 = esc(ts!(l, "Origin category", "来源归类")),
+        chan = esc(rep.verdict.channel.label(l)),
+        desc = esc(rep.verdict.channel.desc(l)),
     );
 
     if !c.evidence.is_empty() {
         let _ = write!(
             h,
-            r#"<h3 style="margin-top:16px">识别依据</h3><ul class="ev">"#
+            r#"<h3 style="margin-top:16px">{}</h3><ul class="ev">"#,
+            esc(ts!(l, "Evidence", "识别依据"))
         );
         for e in &c.evidence {
             let _ = write!(h, "<li>{}</li>", esc(e));
@@ -826,14 +1061,25 @@ fn channel_panel(h: &mut String, rep: &Report) {
 }
 
 fn probe_table(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>探针明细</h2>
-<span class="hint">{n} 项，点开可看证据与原始响应</span></div>
+        r#"<section class="rise"><div class="sec-head"><h2>{title}</h2>
+<span class="hint">{hint}</span></div>
 <div class="tbl-wrap"><table>
-<thead><tr><th>状态</th><th>ID</th><th>探针</th><th>结论</th><th style="text-align:right">耗时</th></tr></thead>
+<thead><tr><th>{c1}</th><th>ID</th><th>{c2}</th><th>{c3}</th><th style="text-align:right">{c4}</th></tr></thead>
 <tbody>"#,
-        n = rep.results.len()
+        title = esc(ts!(l, "Probe detail", "探针明细")),
+        hint = esc(&t!(
+            l,
+            "{n} probes; expand any row for evidence and the raw response",
+            "{n} 项，点开可看证据与原始响应",
+            n = rep.results.len()
+        )),
+        c1 = esc(ts!(l, "Status", "状态")),
+        c2 = esc(ts!(l, "Probe", "探针")),
+        c3 = esc(ts!(l, "Conclusion", "结论")),
+        c4 = esc(ts!(l, "Took", "耗时")),
     );
 
     for g in Group::ALL {
@@ -844,8 +1090,8 @@ fn probe_table(h: &mut String, rep: &Report) {
         let _ = write!(
             h,
             r#"<tr class="grp"><td colspan="5">{} — {}</td></tr>"#,
-            esc(g.label_zh()),
-            esc(g.blurb_zh())
+            esc(g.label(l)),
+            esc(g.blurb(l))
         );
         for r in rows {
             let _ = write!(
@@ -854,13 +1100,16 @@ fn probe_table(h: &mut String, rep: &Report) {
 <td class="pid">{id}</td><td class="plabel">{label}{neutral}</td><td class="psum">{summary}"#,
                 cls = r.status.css(),
                 sym = r.status.symbol(),
-                slabel = r.status.label_zh(),
+                slabel = esc(r.status.label(l)),
                 id = esc(&r.id),
                 label = esc(&r.label),
                 neutral = if r.neutral {
-                    r#"<br><span style="font-weight:400;font-size:11px;color:var(--muted)">仅取证，不计分</span>"#
+                    format!(
+                        r#"<br><span style="font-weight:400;font-size:11px;color:var(--muted)">{}</span>"#,
+                        esc(ts!(l, "evidence only, not scored", "仅取证，不计分"))
+                    )
                 } else {
-                    ""
+                    String::new()
                 },
                 summary = esc(&r.summary),
             );
@@ -870,7 +1119,8 @@ fn probe_table(h: &mut String, rep: &Report) {
             if has_detail {
                 let _ = write!(
                     h,
-                    r#"<details class="detail"><summary>详情</summary><div class="detail-body">"#
+                    r#"<details class="detail"><summary>{}</summary><div class="detail-body">"#,
+                    esc(ts!(l, "detail", "详情"))
                 );
                 if !r.findings.is_empty() {
                     let _ = write!(h, "<ul>");
@@ -910,23 +1160,40 @@ fn probe_table(h: &mut String, rep: &Report) {
 }
 
 fn trace_panel(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let v = &rep.verdict;
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>判定过程</h2>
-<span class="hint">结论怎么来的，可以自己复核</span></div><div class="grid g2">
-<div class="card"><h3>决策轨迹</h3><ol class="trace">"#
+        r#"<section class="rise"><div class="sec-head"><h2>{}</h2>
+<span class="hint">{}</span></div><div class="grid g2">
+<div class="card"><h3>{}</h3><ol class="trace">"#,
+        esc(ts!(l, "How the verdict was reached", "判定过程")),
+        esc(ts!(
+            l,
+            "Every step, so you can check it yourself",
+            "结论怎么来的，可以自己复核"
+        )),
+        esc(ts!(l, "Decision trace", "决策轨迹"))
     );
     for t in &v.trace {
         let _ = write!(h, "<li>{}</li>", esc(t));
     }
     let _ = write!(h, "</ol></div>");
 
-    let _ = write!(h, r#"<div class="card"><h3>关键信号</h3>"#);
+    let _ = write!(
+        h,
+        r#"<div class="card"><h3>{}</h3>"#,
+        esc(ts!(l, "Key signals", "关键信号"))
+    );
     if v.signals.is_empty() {
         let _ = write!(
             h,
-            r#"<p style="margin:0;color:var(--muted);font-size:13.5px">没有触发任何风险信号。</p>"#
+            r#"<p style="margin:0;color:var(--muted);font-size:13.5px">{}</p>"#,
+            esc(ts!(
+                l,
+                "No risk signals were triggered.",
+                "没有触发任何风险信号。"
+            ))
         );
     } else {
         let _ = write!(h, r#"<ul class="ev">"#);
@@ -939,11 +1206,27 @@ fn trace_panel(h: &mut String, rep: &Report) {
     if !rep.skipped.is_empty() {
         let _ = write!(
             h,
-            r#"<h3 style="margin-top:16px">未执行的探针（{n} 项）</h3>
+            r#"<h3 style="margin-top:16px">{title}</h3>
 <div class="note warnbox" style="border-radius:7px;margin-bottom:9px;font-size:13px">
-<b>未测不等于通过。</b>下列探针没有跑完，相关结论不在本报告的覆盖范围内。</div>
+<b>{warn}</b> {body}</div>
 <ul class="ev">"#,
-            n = rep.skipped.len()
+            title = esc(&t!(
+                l,
+                "Probes that did not run ({n})",
+                "未执行的探针（{n} 项）",
+                n = rep.skipped.len()
+            )),
+            warn = esc(ts!(
+                l,
+                "Not tested is not the same as passed.",
+                "未测不等于通过。"
+            )),
+            body = esc(ts!(
+                l,
+                "The probes below did not complete, so the conclusions they would \
+                 have supported are outside this report's coverage.",
+                "下列探针没有跑完，相关结论不在本报告的覆盖范围内。"
+            )),
         );
         for s in &rep.skipped {
             let _ = write!(h, "<li>{}</li>", esc(s));
@@ -953,289 +1236,138 @@ fn trace_panel(h: &mut String, rep: &Report) {
     let _ = write!(h, "</div></div></section>");
 }
 
-fn limits_panel(h: &mut String) {
+fn limits_panel(h: &mut String, l: Lang) {
     let _ = write!(
         h,
-        r#"<section class="rise"><div class="sec-head"><h2>能力边界</h2>
-<span class="hint">这份报告不能证明什么</span></div>
-<div class="note"><b>对诚实供应商的一次误判，代价远高于一次漏检。</b>
-本工具在证据不足时一律弃权，而不是猜一个结论。读报告时请一并考虑下面几条限制。</div>
-<ul class="limits" style="margin-top:16px">
-<li><b>同家族相邻版本不可分。</b>本工具只做到「档位」粒度（旗舰 / 中档 / 轻量），
-同档位内的相邻版本（例如同系列的 4.5 与 4.6）在没有分布基线时无法区分，报告只会给出档位结论。</li>
-<li><b>中间层会污染身份指纹。</b>注入的 system prompt 与响应后处理都会改变模型的表达风格，
-所以协议契约层必须先跑；一旦发现注入或改写，身份结论的置信度已相应下调。</li>
-<li><b>无法证明服务端权重就是官方权重。</b>本工具能证明的是「行为与预期一致或不一致」，
-不能证明对方部署的是不是原始模型文件。</li>
-<li><b>量化版本难以识别。</b>int4 / fp8 量化后的模型与原版在能力上差距较小，
-只能通过能力档位给出概率性判断，给不了定论。</li>
-<li><b>一次检测只代表此刻。</b>渐进式降级需要持续监测才能发现，建议定期重跑并对比历史报告。</li>
-<li><b>估算与权威计数不同。</b>只有端点提供 count_tokens 时计量对照才是权威的；
-否则报告使用本地估算，并已在「对照方式」中注明。</li>
-</ul></section>"#
+        r#"<section class="rise"><div class="sec-head"><h2>{title}</h2>
+<span class="hint">{hint}</span></div>
+<div class="note"><b>{lead}</b> {lead2}</div>
+<ul class="limits" style="margin-top:16px">"#,
+        title = esc(ts!(l, "What this cannot prove", "能力边界")),
+        hint = esc(ts!(l, "The limits of this report", "这份报告不能证明什么")),
+        lead = esc(ts!(
+            l,
+            "One false accusation against an honest provider costs far more than one miss.",
+            "对诚实供应商的一次误判，代价远高于一次漏检。"
+        )),
+        lead2 = esc(ts!(
+            l,
+            "This tool abstains when the evidence is thin rather than guessing. \
+             Please read the conclusions alongside the limits below.",
+            "本工具在证据不足时一律弃权，而不是猜一个结论。读报告时请一并考虑下面几条限制。"
+        )),
     );
+
+    for (head, body) in [
+        (
+            ts!(l, "Adjacent versions are indistinguishable.", "同家族相邻版本不可分。"),
+            ts!(
+                l,
+                "This tool resolves to tier granularity only (flagship / mid / light). \
+                 Adjacent versions inside one tier — say 4.5 and 4.6 of the same line — \
+                 cannot be separated without distribution baselines, so the report \
+                 stops at the tier.",
+                "本工具只做到「档位」粒度（旗舰 / 中档 / 轻量），同档位内的相邻版本（例如同系列的 4.5 与 4.6）在没有分布基线时无法区分，报告只会给出档位结论。"
+            ),
+        ),
+        (
+            ts!(l, "The tier call depends on sampling.", "档位判定依赖采样。"),
+            ts!(
+                l,
+                "Adjacent tiers can still swing on a single question. The tool abstains \
+                 when the margin is narrow, which costs it some real downgrades. \
+                 Use <code>--depth forensic</code> when the answer has to hold up.",
+                "相邻档位之间仍可能因单题得失而摆动。工具在差距不明显时会主动弃权，代价是可能漏掉真实的降级。需要拿得出手的结论请用 <code>--depth forensic</code>。"
+            ),
+        ),
+        (
+            ts!(l, "Middle layers contaminate identity fingerprints.", "中间层会污染身份指纹。"),
+            ts!(
+                l,
+                "An injected system prompt and any response post-processing both change \
+                 how a model expresses itself, which is why the contract layer runs \
+                 first — where injection or rewriting is found, identity confidence has \
+                 already been reduced accordingly.",
+                "注入的 system prompt 与响应后处理都会改变模型的表达风格，所以协议契约层必须先跑；一旦发现注入或改写，身份结论的置信度已相应下调。"
+            ),
+        ),
+        (
+            ts!(l, "Server-side weights cannot be proven.", "无法证明服务端权重就是官方权重。"),
+            ts!(
+                l,
+                "What this tool can show is whether behaviour matches expectations. It \
+                 cannot show which model file the other side actually deployed.",
+                "本工具能证明的是「行为与预期一致或不一致」，不能证明对方部署的是不是原始模型文件。"
+            ),
+        ),
+        (
+            ts!(l, "Quantised builds are hard to spot.", "量化版本难以识别。"),
+            ts!(
+                l,
+                "int4 and fp8 builds sit close to the original in capability, so only a \
+                 probabilistic read from the tier estimate is possible — never a verdict.",
+                "int4 / fp8 量化后的模型与原版在能力上差距较小，只能通过能力档位给出概率性判断，给不了定论。"
+            ),
+        ),
+        (
+            ts!(l, "One run describes one moment.", "一次检测只代表此刻。"),
+            ts!(
+                l,
+                "Gradual degradation only shows up under continuous monitoring. Re-run \
+                 periodically and compare against earlier reports.",
+                "渐进式降级需要持续监测才能发现，建议定期重跑并对比历史报告。"
+            ),
+        ),
+        (
+            ts!(l, "An estimate is not an authoritative count.", "估算与权威计数不同。"),
+            ts!(
+                l,
+                "The metering comparison is only authoritative where the endpoint offers \
+                 count_tokens. Otherwise the report uses a local estimate, and says so \
+                 under \"compared against\".",
+                "只有端点提供 count_tokens 时计量对照才是权威的；否则报告使用本地估算，并已在「对照方式」中注明。"
+            ),
+        ),
+    ] {
+        let _ = write!(h, "<li><b>{}</b> {}</li>", esc(head), body);
+    }
+    let _ = write!(h, "</ul></section>");
 }
 
 fn footer(h: &mut String, rep: &Report) {
+    let l = rep.lang;
     let _ = write!(
         h,
         r#"<footer class="wrap">
-<p>llm-verify v{ver} · 开始 {start} · 结束 {end} · 共 {reqs} 次请求 · 耗时 {secs:.1}s</p>
-<p>目标 {base} · 模型 {model} · 宣称 {claimed} · 协议 {proto} · 深度 {depth}</p>
-<p>本报告为自动化黑盒检测结果，仅供参考，不构成对任何供应商的法律指控。</p>
+<p>{line1}</p>
+<p>{line2}</p>
+<p>{line3}</p>
 </footer>"#,
-        ver = esc(&rep.tool_version),
-        start = esc(&rep.started_at),
-        end = esc(&rep.finished_at),
-        reqs = rep.request_count,
-        secs = rep.duration_ms as f64 / 1000.0,
-        base = esc(&rep.base_url),
-        model = esc(&rep.model),
-        claimed = esc(&rep.claimed_model),
-        proto = rep.protocol,
-        depth = esc(&rep.depth),
+        line1 = esc(&t!(
+            l,
+            "llm-verify v{ver} · started {start} · finished {end} · {reqs} requests · {secs:.1}s",
+            "llm-verify v{ver} · 开始 {start} · 结束 {end} · 共 {reqs} 次请求 · 耗时 {secs:.1}s",
+            ver = rep.tool_version,
+            start = rep.started_at,
+            end = rep.finished_at,
+            reqs = rep.request_count,
+            secs = rep.duration_ms as f64 / 1000.0
+        )),
+        line2 = esc(&t!(
+            l,
+            "target {base} · model {model} · claimed {claimed} · protocol {proto} · depth {depth}",
+            "目标 {base} · 模型 {model} · 宣称 {claimed} · 协议 {proto} · 深度 {depth}",
+            base = rep.base_url,
+            model = rep.model,
+            claimed = rep.claimed_model,
+            proto = rep.protocol,
+            depth = rep.depth
+        )),
+        line3 = esc(ts!(
+            l,
+            "This is an automated black-box measurement, offered for reference only. \
+             It is not a legal accusation against any provider.",
+            "本报告为自动化黑盒检测结果，仅供参考，不构成对任何供应商的法律指控。"
+        )),
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::Protocol;
-    use std::collections::BTreeMap;
-
-    fn sample_report() -> Report {
-        let mut results = vec![
-            ProbeResult::new("preflight", "连通性预检", Group::Contract)
-                .pass("端点可达")
-                .took(120),
-            ProbeResult::new("model_echo", "model 回显", Group::Contract)
-                .fail("请求 a，回显 b")
-                .finding("回显不符")
-                .metric("requested", "a")
-                .evidence("<script>alert(1)</script>")
-                .took(90),
-        ];
-        results.push(
-            ProbeResult::new("tps", "吞吐", Group::Perf)
-                .neutral()
-                .pass("平均 50 tok/s"),
-        );
-        let mut group_scores = BTreeMap::new();
-        group_scores.insert("contract".to_string(), 55.0);
-        group_scores.insert("perf".to_string(), 100.0);
-
-        Report {
-            tool_version: "0.1.0".into(),
-            started_at: "2026-08-13T00:00:00Z".into(),
-            finished_at: "2026-08-13T00:01:00Z".into(),
-            duration_ms: 60_000,
-            host: "api.example.com".into(),
-            base_url: "https://api.example.com/v1".into(),
-            protocol: Protocol::Anthropic,
-            model: "claude-opus-4-5".into(),
-            claimed_model: "claude-opus-4-5".into(),
-            depth: "balanced".into(),
-            request_count: 24,
-            results,
-            verdict: Verdict {
-                authenticity: Authenticity::Suspicious,
-                channel: Channel::Proxy,
-                score: 57.5,
-                confidence: 0.7,
-                hard_gate_hits: vec![GateHit {
-                    name: "静默 fallback".into(),
-                    probe: "invalid_model".into(),
-                    reason: "不存在的模型也返回了内容".into(),
-                }],
-                signals: vec!["model 回显不符".into()],
-                trace: vec!["加权分 57.5".into()],
-                group_scores,
-                coverage_gap: 0.0,
-            },
-            identity: Identity {
-                claimed_model: "claude-opus-4-5".into(),
-                claimed_family: Some("anthropic".into()),
-                claimed_tier: Some("large".into()),
-                observed_family: Some("openai".into()),
-                family_confidence: 0.7,
-                estimated_tier: Some("small".into()),
-                tier_confidence: 0.82,
-                tier_severity: 2,
-                status: IdentityStatus::FamilyMismatch,
-                evidence: vec!["自述指向 openai".into()],
-                tier_scores: [("large".to_string(), 0.2), ("small".to_string(), 0.9)].into(),
-                accuracy_by_difficulty: [("easy".to_string(), 0.9)].into(),
-                tier_questions: 9,
-                tier_margin: 0.31,
-            },
-            billing: BillingAudit {
-                method: "count_tokens 端点".into(),
-                billed_input: 620,
-                honest_input: 12,
-                input_ratio: 51.67,
-                billed_cost_usd: 0.0093,
-                honest_cost_usd: 0.00018,
-                cost_ratio: 51.67,
-                pricing_source: "内置定价表".into(),
-                anomalies: vec!["隐藏 prompt 膨胀".into()],
-                ..Default::default()
-            },
-            channel: ChannelSignature {
-                label: "LiteLLM".into(),
-                display: "LiteLLM".into(),
-                confidence: 1.0,
-                tier: 1,
-                evidence: vec!["响应头 x-litellm-version".into()],
-                all_hops: vec!["LiteLLM".into(), "New-API".into()],
-            },
-            perf: PerfSummary {
-                samples: 3,
-                ttft_ms: vec![300.0, 420.0, 510.0],
-                latency_ms: vec![1200.0, 1500.0, 1900.0],
-                tps: vec![48.0, 52.0],
-                ttft_p50: 420.0,
-                ttft_p95: 510.0,
-                latency_p50: 1500.0,
-                latency_p95: 1900.0,
-                tps_mean: 50.0,
-                latency_cv: 0.22,
-            },
-            skipped: vec!["缺版本头（missing_version）：仅适用于 Anthropic 协议".into()],
-        }
-    }
-
-    #[test]
-    fn renders_a_self_contained_document() {
-        let h = render(&sample_report());
-        assert!(h.contains("<title>llm-verify · api.example.com</title>"));
-        assert!(h.contains("<style>"));
-        // No network fetches of any kind: the file must render offline forever.
-        assert!(!h.contains("http://"));
-        assert!(!h.contains("<script"));
-        assert!(!h.contains("cdn."));
-        assert!(!h.contains("@import"));
-    }
-
-    #[test]
-    fn escapes_probe_evidence_so_a_hostile_response_cannot_inject_markup() {
-        // A malicious endpoint controls the response text that lands in the
-        // report; it must never become live markup.
-        let h = render(&sample_report());
-        assert!(h.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
-        assert!(!h.contains("<script>alert(1)</script>"));
-    }
-
-    #[test]
-    fn hard_gates_are_surfaced_prominently() {
-        let h = render(&sample_report());
-        assert!(h.contains("硬门禁命中 1 项"));
-        assert!(h.contains("静默 fallback"));
-    }
-
-    #[test]
-    fn skipped_probes_carry_the_not_tested_warning() {
-        let h = render(&sample_report());
-        assert!(h.contains("未测不等于通过"));
-        assert!(h.contains("未执行的探针（1 项）"));
-    }
-
-    #[test]
-    fn limits_section_is_always_present() {
-        let h = render(&sample_report());
-        assert!(h.contains("能力边界"));
-        assert!(h.contains("无法证明服务端权重就是官方权重"));
-    }
-
-    #[test]
-    fn donut_offset_matches_the_score() {
-        let mut rep = sample_report();
-        rep.verdict.score = 100.0;
-        // A full score draws the whole ring, so the final offset is zero.
-        assert!(render(&rep).contains("--final:0.00"));
-
-        rep.verdict.score = 0.0;
-        let h = render(&rep);
-        let circ = 2.0 * std::f64::consts::PI * 64.0;
-        assert!(h.contains(&format!("--final:{circ:.2}")));
-    }
-
-    #[test]
-    fn out_of_range_scores_do_not_produce_a_broken_ring() {
-        let mut rep = sample_report();
-        rep.verdict.score = 140.0;
-        assert!(render(&rep).contains("--final:0.00"));
-        rep.verdict.score = -20.0;
-        let h = render(&rep);
-        let circ = 2.0 * std::f64::consts::PI * 64.0;
-        assert!(h.contains(&format!("--final:{circ:.2}")));
-    }
-
-    #[test]
-    fn theme_tokens_cover_all_three_viewer_states() {
-        // Bare :root, the prefers-color-scheme block, and the explicit stamp.
-        assert!(CSS.contains(":root{"));
-        assert!(CSS.contains("@media (prefers-color-scheme:dark)"));
-        assert!(CSS.contains(r#":root:not([data-theme="light"])"#));
-        assert!(CSS.contains(r#":root[data-theme="dark"]"#));
-        // A transparent body would borrow the host's background.
-        assert!(CSS.contains("body{margin:0;background:var(--ground)"));
-    }
-
-    #[test]
-    fn animation_is_disabled_under_reduced_motion() {
-        assert!(CSS.contains("@media (prefers-reduced-motion:reduce)"));
-        assert!(CSS.contains("stroke-dashoffset:var(--final) !important"));
-    }
-
-    #[test]
-    fn empty_perf_data_omits_the_panel_rather_than_dividing_by_zero() {
-        let mut rep = sample_report();
-        rep.perf = PerfSummary::default();
-        let h = render(&rep);
-        assert!(!h.contains("首字延迟分布"));
-        assert!(
-            h.contains("能力边界"),
-            "the rest of the report still renders"
-        );
-    }
-
-    #[test]
-    fn zero_honest_tokens_does_not_claim_a_ratio() {
-        let mut rep = sample_report();
-        rep.billing.honest_input = 0;
-        rep.billing.billed_input = 0;
-        let h = render(&rep);
-        assert!(h.contains("没有可对照的独立计数"));
-    }
-
-    #[test]
-    fn tier_call_shows_what_it_rests_on() {
-        let h = render(&sample_report());
-        assert!(h.contains("档位判定依据"));
-        assert!(h.contains("9 道能力题"));
-        // A well-sampled call must not carry the thin-sample caveat.
-        assert!(!h.contains("样本量偏小"));
-    }
-
-    #[test]
-    fn a_thin_tier_sample_carries_a_caveat() {
-        let mut rep = sample_report();
-        rep.identity.tier_questions = 6;
-        let h = render(&rep);
-        assert!(h.contains("样本量偏小"));
-        assert!(h.contains("--depth forensic"));
-    }
-
-    #[test]
-    fn neutral_probes_are_marked_as_non_scoring() {
-        let h = render(&sample_report());
-        assert!(h.contains("仅取证，不计分"));
-    }
-
-    #[test]
-    fn every_group_with_a_score_gets_a_bar() {
-        let h = render(&sample_report());
-        assert!(h.contains(Group::Contract.label_zh()));
-        assert!(h.contains(Group::Perf.label_zh()));
-    }
 }

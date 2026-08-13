@@ -1,5 +1,7 @@
 # Security Policy
 
+**English** · [简体中文](SECURITY.zh-CN.md)
+
 ## Reporting a vulnerability
 
 Report privately through [GitHub Security Advisories](https://github.com/asale-ai/llm-verify/security/advisories/new). Please do not open a public issue for a vulnerability.

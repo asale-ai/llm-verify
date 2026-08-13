@@ -36,7 +36,13 @@ fn signature(resp: &crate::protocol::ChatResponse, raw: &crate::client::RawRespo
 }
 
 pub async fn signature_drift(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("signature_drift", "跨请求签名漂移", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "signature_drift",
+        ts!(l, "Cross-request signature drift", "跨请求签名漂移"),
+        G,
+    )
+    .weight(2);
     let runs = ctx.depth.repeats().max(2);
     let t0 = now_ms();
 
@@ -78,22 +84,43 @@ pub async fn signature_drift(ctx: &Ctx) -> ProbeResult {
     }
 
     if sigs.is_empty() {
-        return p.error("所有一致性请求都失败了").took(took);
+        return p
+            .error(t!(
+                l,
+                "Every consistency request failed",
+                "所有一致性请求都失败了"
+            ))
+            .took(took);
     }
     if variants == 1 {
-        p.pass(format!("{runs} 次请求签名完全一致")).took(took)
+        p.pass(t!(
+            l,
+            "{runs} requests produced an identical signature",
+            "{runs} 次请求签名完全一致"
+        ))
+        .took(took)
     } else if drift < 35.0 {
-        p.warn(format!("{variants} 种签名变体，漂移 {drift:.0}%"))
-            .took(took)
+        p.warn(t!(
+            l,
+            "{variants} signature variants, {drift:.0}% drift",
+            "{variants} 种签名变体，漂移 {drift:.0}%"
+        ))
+        .took(took)
     } else {
-        p.fail(format!("{variants} 种签名变体，漂移 {drift:.0}%"))
-            .finding("同一请求得到结构不同的响应，后端很可能不止一个")
+        p.fail(t!(l, "{variants} signature variants, {drift:.0}% drift", "{variants} 种签名变体，漂移 {drift:.0}%"))
+            .finding(t!(l, "The same request returns structurally different responses; there is probably more than one backend", "同一请求得到结构不同的响应，后端很可能不止一个"))
             .took(took)
     }
 }
 
 pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("cache_replay", "缓存回放检测", G).weight(2);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "cache_replay",
+        ts!(l, "Cache replay detection", "缓存回放检测"),
+        G,
+    )
+    .weight(2);
     let runs = ctx.depth.repeats().max(2);
     let t0 = now_ms();
 
@@ -121,7 +148,12 @@ pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
     let took = (now_ms() - t0) as u64;
     if texts.len() < 2 {
         return p
-            .skip(format!("只拿到 {} 个样本，不足以比较", texts.len()))
+            .skip(t!(
+                l,
+                "Only {} sample(s) collected; too few to compare",
+                "只拿到 {} 个样本，不足以比较",
+                texts.len()
+            ))
             .took(took);
     }
 
@@ -138,17 +170,18 @@ pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
     // A model at temperature 1 will repeat itself sometimes; that is sampling,
     // not caching. Only near-total collapse is evidence of a replayed answer.
     if all_identical && !texts[0].is_empty() {
-        p.fail(format!("temperature=1 下 {} 次回答逐字相同", texts.len()))
-            .finding("这不是模型的行为，是缓存在回放——你可能在为没有真正推理的请求付费")
+        p.fail(t!(l, "{} answers at temperature 1 were word-for-word identical", "temperature=1 下 {} 次回答逐字相同", texts.len()))
+            .finding(t!(l, "That is not model behaviour, it is a cache replaying — you may be paying for requests that never ran", "这不是模型的行为，是缓存在回放——你可能在为没有真正推理的请求付费"))
     } else if uniq.len() * 2 <= texts.len() {
-        p.warn(format!(
-            "{} 个样本里只有 {} 种不同回答，重复率过半",
+        p.warn(t!(l, "Only {} distinct answers across {} samples; over half repeat", "{} 个样本里只有 {} 种不同回答，重复率过半",
             texts.len(),
             uniq.len()
         ))
-        .finding("尚不足以断定是缓存，但重复率高于同温度下的正常采样")
+        .finding(t!(l, "Not enough to call it a cache, but repetition runs higher than normal sampling at this temperature", "尚不足以断定是缓存，但重复率高于同温度下的正常采样"))
     } else {
-        p.pass(format!(
+        p.pass(t!(
+            l,
+            "{} samples produced {} distinct answers; generation is real",
             "{} 次采样得到 {} 种不同回答，确认是真实生成",
             texts.len(),
             uniq.len()
@@ -157,12 +190,22 @@ pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
 }
 
 pub async fn request_id_unique(ctx: &Ctx) -> ProbeResult {
-    let p = ProbeResult::new("id_unique", "消息 ID 唯一性", G).weight(1);
+    let l = ctx.lang;
+    let p = ProbeResult::new(
+        "id_unique",
+        ts!(l, "Message ID uniqueness", "消息 ID 唯一性"),
+        G,
+    )
+    .weight(1);
     let ids = ctx.message_ids.borrow().clone();
     let non_empty: Vec<&String> = ids.iter().filter(|i| !i.is_empty()).collect();
 
     if non_empty.len() < 2 {
-        return p.skip("收集到的消息 ID 不足 2 个");
+        return p.skip(t!(
+            l,
+            "Fewer than two message IDs collected",
+            "收集到的消息 ID 不足 2 个"
+        ));
     }
     let mut uniq: Vec<&String> = non_empty.clone();
     uniq.sort();
@@ -173,11 +216,16 @@ pub async fn request_id_unique(ctx: &Ctx) -> ProbeResult {
         .metric("unique_ids", uniq.len());
 
     if uniq.len() == non_empty.len() {
-        p.pass(format!("{} 个消息 ID 全部唯一", non_empty.len()))
+        p.pass(t!(
+            l,
+            "All {} message IDs are unique",
+            "{} 个消息 ID 全部唯一",
+            non_empty.len()
+        ))
     } else {
         let dupes = non_empty.len() - uniq.len();
-        p.fail(format!("{} 个消息 ID 中有 {dupes} 个重复", non_empty.len()))
-            .finding("重复的消息 ID 意味着响应被重放，而不是每次真实生成")
+        p.fail(t!(l, "{dupes} of {} message IDs are duplicates", "{} 个消息 ID 中有 {dupes} 个重复", non_empty.len()))
+            .finding(t!(l, "Duplicate message IDs mean responses are being replayed rather than generated each time", "重复的消息 ID 意味着响应被重放，而不是每次真实生成"))
     }
 }
 

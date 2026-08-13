@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The data model every probe writes into and every output format reads from.
 
+use crate::i18n::Lang;
 use crate::protocol::Protocol;
 use serde::Serialize;
 use serde_json::Value;
@@ -29,13 +30,13 @@ impl Status {
         }
     }
 
-    pub fn label_zh(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Pass => "通过",
-            Self::Warn => "警告",
-            Self::Fail => "失败",
-            Self::Skip => "跳过",
-            Self::Error => "错误",
+            Self::Pass => ts!(lang, "pass", "通过"),
+            Self::Warn => ts!(lang, "warn", "警告"),
+            Self::Fail => ts!(lang, "fail", "失败"),
+            Self::Skip => ts!(lang, "skip", "跳过"),
+            Self::Error => ts!(lang, "error", "错误"),
         }
     }
 
@@ -86,27 +87,55 @@ impl Group {
         Group::Consistency,
     ];
 
-    pub fn label_zh(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Contract => "协议契约",
-            Self::Stream => "流式传输",
-            Self::Billing => "计量计费",
-            Self::Channel => "渠道溯源",
-            Self::Perf => "性能速度",
-            Self::Identity => "模型身份",
-            Self::Consistency => "跨请求一致性",
+            Self::Contract => ts!(lang, "Protocol contract", "协议契约"),
+            Self::Stream => ts!(lang, "Streaming", "流式传输"),
+            Self::Billing => ts!(lang, "Metering & billing", "计量计费"),
+            Self::Channel => ts!(lang, "Channel provenance", "渠道溯源"),
+            Self::Perf => ts!(lang, "Performance", "性能速度"),
+            Self::Identity => ts!(lang, "Model identity", "模型身份"),
+            Self::Consistency => ts!(lang, "Cross-request consistency", "跨请求一致性"),
         }
     }
 
-    pub fn blurb_zh(&self) -> &'static str {
+    pub fn blurb(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Contract => "这是不是一条正牌 API 通道",
-            Self::Stream => "流式响应是否符合协议，有没有空 body",
-            Self::Billing => "计量数字可信吗，有没有多收钱",
-            Self::Channel => "这条链路上有哪些中转",
-            Self::Perf => "首字延迟、吞吐与抖动",
-            Self::Identity => "背后跑的是不是它声称的那个模型",
-            Self::Consistency => "多次请求的行为是否一致",
+            Self::Contract => ts!(
+                lang,
+                "Is this a genuine API channel?",
+                "这是不是一条正牌 API 通道"
+            ),
+            Self::Stream => ts!(
+                lang,
+                "Does streaming follow the protocol, or arrive empty?",
+                "流式响应是否符合协议，有没有空 body"
+            ),
+            Self::Billing => ts!(
+                lang,
+                "Are the token counts honest, or are you overcharged?",
+                "计量数字可信吗，有没有多收钱"
+            ),
+            Self::Channel => ts!(
+                lang,
+                "What relays sit on this path?",
+                "这条链路上有哪些中转"
+            ),
+            Self::Perf => ts!(
+                lang,
+                "First-token latency, throughput and jitter",
+                "首字延迟、吞吐与抖动"
+            ),
+            Self::Identity => ts!(
+                lang,
+                "Is the model behind this the one that was sold?",
+                "背后跑的是不是它声称的那个模型"
+            ),
+            Self::Consistency => ts!(
+                lang,
+                "Does the endpoint behave the same way every time?",
+                "多次请求的行为是否一致"
+            ),
         }
     }
 
@@ -247,29 +276,53 @@ pub enum Authenticity {
 }
 
 impl Authenticity {
-    pub fn label_zh(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Authentic => "正品",
-            Self::AuthenticDegraded => "正品（有瑕疵）",
-            Self::ThirdParty => "第三方转发",
-            Self::Suspicious => "存疑",
-            Self::Counterfeit => "假冒",
-            Self::Inconclusive => "无法判定",
+            Self::Authentic => ts!(lang, "Genuine", "正品"),
+            Self::AuthenticDegraded => ts!(lang, "Genuine, with defects", "正品（有瑕疵）"),
+            Self::ThirdParty => ts!(lang, "Relayed", "第三方转发"),
+            Self::Suspicious => ts!(lang, "Suspicious", "存疑"),
+            Self::Counterfeit => ts!(lang, "Counterfeit", "假冒"),
+            Self::Inconclusive => ts!(lang, "Inconclusive", "无法判定"),
         }
     }
 
-    pub fn desc_zh(&self) -> &'static str {
+    pub fn desc(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Authentic => "协议契约、计量与身份信号全部对齐，可以放心使用。",
-            Self::AuthenticDegraded => {
+            Self::Authentic => ts!(
+                lang,
+                "Contract, metering and identity signals all line up. Safe to rely on.",
+                "协议契约、计量与身份信号全部对齐，可以放心使用。"
+            ),
+            Self::AuthenticDegraded => ts!(
+                lang,
+                "The model itself looks real, but the path injects content, misreports \
+                 usage, or has capabilities missing.",
                 "模型本身看起来是真的，但链路上存在注入、计量偏差或能力缺失。"
-            }
-            Self::ThirdParty => {
+            ),
+            Self::ThirdParty => ts!(
+                lang,
+                "Behaviour is broadly correct, but vendor markers are absent or the \
+                 billing ratio runs high. A real model behind a relay.",
                 "行为基本正常，但缺少官方特征、或计量倍率偏高，是经过转发的真模型。"
-            }
-            Self::Suspicious => "多项异常同时出现，可能被篡改、降级或经过逆向渠道。",
-            Self::Counterfeit => "模型回显与自我认同同时对不上，背后大概率不是它声称的模型。",
-            Self::Inconclusive => "连通性或数据覆盖不足，不足以下判断。",
+            ),
+            Self::Suspicious => ts!(
+                lang,
+                "Several anomalies at once. Possibly tampered with, downgraded, or \
+                 served through a reconstructed channel.",
+                "多项异常同时出现，可能被篡改、降级或经过逆向渠道。"
+            ),
+            Self::Counterfeit => ts!(
+                lang,
+                "The echoed model and the model's own self-identification both \
+                 disagree with the claim. Most likely not the model advertised.",
+                "模型回显与自我认同同时对不上，背后大概率不是它声称的模型。"
+            ),
+            Self::Inconclusive => ts!(
+                lang,
+                "Connectivity or probe coverage was too thin to support a verdict.",
+                "连通性或数据覆盖不足，不足以下判断。"
+            ),
         }
     }
 
@@ -298,25 +351,52 @@ pub enum Channel {
 }
 
 impl Channel {
-    pub fn label_zh(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Official => "官方直连",
-            Self::Cloud => "云平台",
-            Self::Subscription => "订阅号",
-            Self::Proxy => "普通中转",
-            Self::ReverseProxy => "逆向渠道",
-            Self::Unknown => "无法确定",
+            Self::Official => ts!(lang, "Direct from vendor", "官方直连"),
+            Self::Cloud => ts!(lang, "Cloud platform", "云平台"),
+            Self::Subscription => ts!(lang, "Subscription-derived", "订阅号"),
+            Self::Proxy => ts!(lang, "Relay", "普通中转"),
+            Self::ReverseProxy => ts!(lang, "Reconstructed channel", "逆向渠道"),
+            Self::Unknown => ts!(lang, "Undetermined", "无法确定"),
         }
     }
 
-    pub fn desc_zh(&self) -> &'static str {
+    pub fn desc(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Official => "响应头带官方特征，看起来是直连厂商 API。",
-            Self::Cloud => "经由 AWS Bedrock / Google Vertex 等云平台转售。",
-            Self::Subscription => "功能完整但缺少官方响应头，像是订阅账号导出的接口。",
-            Self::Proxy => "功能正常但没有官方特征，是一层普通中转。",
-            Self::ReverseProxy => "多项官方能力缺失，特征符合从网页端逆向出来的接口。",
-            Self::Unknown => "信号不足，无法确定链路来源。",
+            Self::Official => ts!(
+                lang,
+                "Response headers carry vendor markers; this looks like a direct \
+                 connection to the provider's own API.",
+                "响应头带官方特征，看起来是直连厂商 API。"
+            ),
+            Self::Cloud => ts!(
+                lang,
+                "Resold through a cloud platform such as AWS Bedrock or Google Vertex.",
+                "经由 AWS Bedrock / Google Vertex 等云平台转售。"
+            ),
+            Self::Subscription => ts!(
+                lang,
+                "Feature-complete but without vendor headers — the shape of an \
+                 interface derived from a subscription account.",
+                "功能完整但缺少官方响应头，像是订阅账号导出的接口。"
+            ),
+            Self::Proxy => ts!(
+                lang,
+                "Works correctly but carries no vendor markers. One relay hop.",
+                "功能正常但没有官方特征，是一层普通中转。"
+            ),
+            Self::ReverseProxy => ts!(
+                lang,
+                "Several first-party capabilities are missing, matching an \
+                 interface reconstructed from a web session.",
+                "多项官方能力缺失，特征符合从网页端逆向出来的接口。"
+            ),
+            Self::Unknown => ts!(
+                lang,
+                "Too few signals to place this endpoint on the path.",
+                "信号不足，无法确定链路来源。"
+            ),
         }
     }
 }
@@ -365,14 +445,22 @@ pub enum IdentityStatus {
 }
 
 impl IdentityStatus {
-    pub fn label_zh(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
         match self {
-            Self::Match => "相符",
-            Self::FamilyOnly => "家族相符，档位未验证",
-            Self::TierMismatch => "家族相符，但档位被降级",
-            Self::FamilyMismatch => "家族不符",
-            Self::Ambiguous => "信号矛盾",
-            Self::Insufficient => "数据不足",
+            Self::Match => ts!(lang, "Matches the claim", "相符"),
+            Self::FamilyOnly => ts!(
+                lang,
+                "Family matches, tier unverified",
+                "家族相符，档位未验证"
+            ),
+            Self::TierMismatch => ts!(
+                lang,
+                "Family matches, but the tier was downgraded",
+                "家族相符，但档位被降级"
+            ),
+            Self::FamilyMismatch => ts!(lang, "Different model family", "家族不符"),
+            Self::Ambiguous => ts!(lang, "Signals contradict each other", "信号矛盾"),
+            Self::Insufficient => ts!(lang, "Not enough data", "数据不足"),
         }
     }
 
@@ -443,7 +531,9 @@ pub struct BillingRound {
 
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct ChannelSignature {
-    pub label: String,
+    /// Stable classifier key. The verdict layer routes on this.
+    pub key: String,
+    /// Localised name for display.
     pub display: String,
     pub confidence: f64,
     pub tier: u8,
@@ -474,6 +564,8 @@ pub struct PerfSummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub tool_version: String,
+    /// Language every human-readable string in this report is written in.
+    pub lang: Lang,
     pub started_at: String,
     pub finished_at: String,
     pub duration_ms: u64,
@@ -562,6 +654,7 @@ mod tests {
     fn report_with(auth: Authenticity, score: f64, gates: Vec<GateHit>) -> Report {
         Report {
             tool_version: "t".into(),
+            lang: Lang::En,
             started_at: String::new(),
             finished_at: String::new(),
             duration_ms: 0,

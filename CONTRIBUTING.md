@@ -1,5 +1,7 @@
 # Contributing
 
+**English** · [简体中文](CONTRIBUTING.zh-CN.md)
+
 ## Build
 
 Rust 1.82 or newer.
@@ -28,11 +30,33 @@ Deliberately avoided, with the reasoning recorded in `src/util.rs`:
 
 `reqwest` uses `rustls-tls`, not OpenSSL, so cross-compilation needs no system libraries.
 
+## Bilingual output
+
+Every user-facing string must exist in both languages, written at the point it
+is used with both halves side by side:
+
+```rust
+p.pass(t!(l, "Endpoint reachable, {}ms", "端点可达，{}ms", raw.duration_ms))
+```
+
+- `t!` yields `String`, `ts!` yields `&'static str`. Both halves receive the
+  same arguments, so a mismatched placeholder count is a compile error.
+- `t!` goes through `format!` even with no extra arguments, because the
+  messages lean on inline captures like `{host}`. A literal brace in a message
+  must therefore be written `{{`.
+- Classification results carry a **stable key**, never a display name. The
+  verdict layer routes on those keys, so a translation can never change a
+  verdict — see `probes/channel.rs`.
+- `i18n::coverage_tests` enforces the pairing at the source level. It caught a
+  real incident: `contract.rs` once shipped Chinese-only, and an English run
+  silently printed Chinese for a third of its probes.
+
 ## Layout
 
 ```
 src/
   main.rs        CLI, env/.env resolution, output writing
+  i18n.rs        Lang enum, locale detection, the t! / ts! macros
   protocol.rs    OpenAI + Anthropic wire formats
   client.rs      HTTP transport and SSE parsing
   probes/
@@ -75,7 +99,7 @@ These exist because the project's worst failure mode is a false accusation again
 
 ## Testing
 
-Unit tests are inline `#[cfg(test)]` modules and must not touch the network. The interesting ones assert on the guard rails: `verdict::tests::family_mismatch_on_a_weak_signal_degrades_to_ambiguous`, `narrow_tier_margin_withdraws_the_severity_claim`, `reverse_weight_tests::weak_signals_alone_stay_below_the_threshold`.
+Unit tests are inline `#[cfg(test)]` modules and must not touch the network. The interesting ones assert on the guard rails: `verdict::tests::family_mismatch_on_a_weak_signal_degrades_to_ambiguous`, `narrow_tier_margin_withdraws_the_severity_claim`, `reverse_weight_tests::weak_signals_alone_stay_below_the_threshold`, `i18n::coverage_tests::every_chinese_literal_has_an_english_partner`.
 
 For end-to-end checks against a real endpoint, put credentials in `.env` (git-ignored) and run against a known-good provider first, so a change in the tool is distinguishable from a change in the endpoint.
 

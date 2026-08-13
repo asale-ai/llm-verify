@@ -7,6 +7,7 @@
 //! signal that no amount of prompt engineering can hide.
 
 use super::{Ctx, PerfSample};
+use crate::i18n::Lang;
 use crate::protocol::ChatRequest;
 use crate::report::{Group, ProbeResult};
 use crate::util::{estimate_tokens, mean, percentile, stddev};
@@ -25,11 +26,12 @@ const CV_UNSTABLE: f64 = 0.5;
 pub async fn run(ctx: &Ctx) -> Vec<ProbeResult> {
     sample(ctx).await;
     let samples = ctx.perf.borrow().clone();
+    let l = ctx.lang;
     vec![
-        ttft(&samples),
-        latency(&samples),
-        throughput(&samples),
-        jitter(&samples),
+        ttft(&samples, l),
+        latency(&samples, l),
+        throughput(&samples, l),
+        jitter(&samples, l),
     ]
 }
 
@@ -90,11 +92,11 @@ fn tps_values(samples: &[PerfSample]) -> Vec<f64> {
     v
 }
 
-fn ttft(samples: &[PerfSample]) -> ProbeResult {
-    let p = ProbeResult::new("ttft", "首字延迟 TTFT", G).weight(2);
+fn ttft(samples: &[PerfSample], l: Lang) -> ProbeResult {
+    let p = ProbeResult::new("ttft", ts!(l, "Time to first token", "首字延迟 TTFT"), G).weight(2);
     let v = ttft_values(samples);
     if v.is_empty() {
-        return p.skip("没有可用的流式样本");
+        return p.skip(t!(l, "No streamed samples available", "没有可用的流式样本"));
     }
     let p50 = percentile(&v, 50.0);
     let p95 = percentile(&v, 95.0);
@@ -106,20 +108,39 @@ fn ttft(samples: &[PerfSample]) -> ProbeResult {
         .metric("max_ms", v[v.len() - 1].round());
 
     if p50 <= 1000.0 {
-        p.pass(format!("P50 {:.0}ms，响应迅速", p50))
+        p.pass(t!(
+            l,
+            "P50 {:.0}ms, responsive",
+            "P50 {:.0}ms，响应迅速",
+            p50
+        ))
     } else if p50 <= 3000.0 {
-        p.warn(format!("P50 {:.0}ms，偏慢", p50))
+        p.warn(t!(
+            l,
+            "P50 {:.0}ms, on the slow side",
+            "P50 {:.0}ms，偏慢",
+            p50
+        ))
     } else {
-        p.fail(format!("P50 {:.0}ms，明显迟滞", p50))
-            .finding("首字延迟超过 3 秒，用户会明显感到卡顿")
+        p.fail(t!(
+            l,
+            "P50 {:.0}ms, noticeably laggy",
+            "P50 {:.0}ms，明显迟滞",
+            p50
+        ))
+        .finding(t!(
+            l,
+            "Over three seconds to first token; users will feel this as a stall",
+            "首字延迟超过 3 秒，用户会明显感到卡顿"
+        ))
     }
 }
 
-fn latency(samples: &[PerfSample]) -> ProbeResult {
-    let p = ProbeResult::new("latency", "端到端延迟", G).weight(1);
+fn latency(samples: &[PerfSample], l: Lang) -> ProbeResult {
+    let p = ProbeResult::new("latency", ts!(l, "End-to-end latency", "端到端延迟"), G).weight(1);
     let v = latency_values(samples);
     if v.is_empty() {
-        return p.skip("没有可用的样本");
+        return p.skip(t!(l, "No samples available", "没有可用的样本"));
     }
     let p50 = percentile(&v, 50.0);
     let p95 = percentile(&v, 95.0);
@@ -135,11 +156,17 @@ fn latency(samples: &[PerfSample]) -> ProbeResult {
     )
 }
 
-fn throughput(samples: &[PerfSample]) -> ProbeResult {
-    let p = ProbeResult::new("tps", "生成吞吐", G).weight(2).neutral();
+fn throughput(samples: &[PerfSample], l: Lang) -> ProbeResult {
+    let p = ProbeResult::new("tps", ts!(l, "Generation throughput", "生成吞吐"), G)
+        .weight(2)
+        .neutral();
     let v = tps_values(samples);
     if v.is_empty() {
-        return p.skip("没有足够的流式样本计算吞吐");
+        return p.skip(t!(
+            l,
+            "Not enough streamed samples to compute throughput",
+            "没有足够的流式样本计算吞吐"
+        ));
     }
     let avg = mean(&v);
     let band = tier_band(avg);
@@ -149,16 +176,15 @@ fn throughput(samples: &[PerfSample]) -> ProbeResult {
         .metric("p50_tps", (percentile(&v, 50.0) * 10.0).round() / 10.0)
         .metric("speed_band", band);
 
-    p.pass(format!(
-        "平均 {:.1} tok/s（{}）",
+    p.pass(t!(l, "{:.1} tok/s on average ({})", "平均 {:.1} tok/s（{}）",
         avg,
         match band {
-            "large" => "偏大模型速度",
-            "small" => "偏小模型速度",
-            _ => "中间档",
+            "large" => t!(l, "consistent with a large model", "偏大模型速度"),
+            "small" => t!(l, "consistent with a small model", "偏小模型速度"),
+            _ => t!(l, "in between", "中间档"),
         }
     ))
-    .finding("吞吐本身也是身份证据：声称旗舰却跑出小模型的速度，是降档的旁证".to_string())
+    .finding(t!(l, "Throughput is identity evidence too: a claimed flagship running at small-model speed is corroborating evidence of a downgrade", "吞吐本身也是身份证据：声称旗舰却跑出小模型的速度，是降档的旁证").to_string())
 }
 
 /// Which size class this throughput is consistent with.
@@ -174,11 +200,16 @@ pub fn tier_band(tps: f64) -> &'static str {
     }
 }
 
-fn jitter(samples: &[PerfSample]) -> ProbeResult {
-    let p = ProbeResult::new("jitter", "延迟抖动", G).weight(2);
+fn jitter(samples: &[PerfSample], l: Lang) -> ProbeResult {
+    let p = ProbeResult::new("jitter", ts!(l, "Latency jitter", "延迟抖动"), G).weight(2);
     let v = latency_values(samples);
     if v.len() < 3 {
-        return p.skip(format!("样本只有 {} 个，不足以判断抖动", v.len()));
+        return p.skip(t!(
+            l,
+            "Only {} samples; too few to judge jitter",
+            "样本只有 {} 个，不足以判断抖动",
+            v.len()
+        ));
     }
     let m = mean(&v);
     let sd = stddev(&v);
@@ -190,12 +221,20 @@ fn jitter(samples: &[PerfSample]) -> ProbeResult {
         .metric("cv", (cv * 1000.0).round() / 1000.0);
 
     if cv < 0.25 {
-        p.pass(format!("变异系数 {cv:.2}，延迟稳定"))
+        p.pass(t!(
+            l,
+            "Coefficient of variation {cv:.2}; latency is stable",
+            "变异系数 {cv:.2}，延迟稳定"
+        ))
     } else if cv < CV_UNSTABLE {
-        p.warn(format!("变异系数 {cv:.2}，延迟有些波动"))
+        p.warn(t!(
+            l,
+            "Coefficient of variation {cv:.2}; latency wobbles somewhat",
+            "变异系数 {cv:.2}，延迟有些波动"
+        ))
     } else {
-        p.fail(format!("变异系数 {cv:.2}，延迟高度不稳定"))
-            .finding("同一端点的耗时分布分散，常见于后端轮询多个供应商或严重超卖")
+        p.fail(t!(l, "Coefficient of variation {cv:.2}; latency is highly unstable", "变异系数 {cv:.2}，延迟高度不稳定"))
+            .finding(t!(l, "A scattered latency distribution on one endpoint is typical of round-robin across several providers, or heavy oversubscription", "同一端点的耗时分布分散，常见于后端轮询多个供应商或严重超卖"))
     }
 }
 
@@ -222,6 +261,8 @@ pub fn summarize(samples: &[PerfSample]) -> crate::report::PerfSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const L: Lang = Lang::En;
     use crate::report::Status;
 
     fn s(ttft: Option<u64>, lat: u64, out: u32) -> PerfSample {
@@ -247,31 +288,31 @@ mod tests {
 
     #[test]
     fn probes_skip_rather_than_report_zero_when_starved() {
-        assert_eq!(ttft(&[]).status, Status::Skip);
-        assert_eq!(latency(&[]).status, Status::Skip);
-        assert_eq!(throughput(&[]).status, Status::Skip);
+        assert_eq!(ttft(&[], L).status, Status::Skip);
+        assert_eq!(latency(&[], L).status, Status::Skip);
+        assert_eq!(throughput(&[], L).status, Status::Skip);
         // Jitter needs three samples before a spread means anything.
         assert_eq!(
-            jitter(&[s(Some(1), 100, 5), s(Some(1), 120, 5)]).status,
+            jitter(&[s(Some(1), 100, 5), s(Some(1), 120, 5)], L).status,
             Status::Skip
         );
     }
 
     #[test]
     fn ttft_bands_track_user_perceived_lag() {
-        assert_eq!(ttft(&[s(Some(300), 900, 10)]).status, Status::Pass);
-        assert_eq!(ttft(&[s(Some(2000), 4000, 10)]).status, Status::Warn);
-        assert_eq!(ttft(&[s(Some(5000), 9000, 10)]).status, Status::Fail);
+        assert_eq!(ttft(&[s(Some(300), 900, 10)], L).status, Status::Pass);
+        assert_eq!(ttft(&[s(Some(2000), 4000, 10)], L).status, Status::Warn);
+        assert_eq!(ttft(&[s(Some(5000), 9000, 10)], L).status, Status::Fail);
     }
 
     #[test]
     fn jitter_flags_a_scattered_distribution() {
         let steady = vec![s(Some(1), 1000, 9), s(Some(1), 1010, 9), s(Some(1), 990, 9)];
-        assert_eq!(jitter(&steady).status, Status::Pass);
+        assert_eq!(jitter(&steady, L).status, Status::Pass);
 
         // 300ms / 2000ms / 5000ms — the shape of a multi-backend fan-out.
         let scattered = vec![s(Some(1), 300, 9), s(Some(1), 2000, 9), s(Some(1), 5000, 9)];
-        let r = jitter(&scattered);
+        let r = jitter(&scattered, L);
         assert_eq!(r.status, Status::Fail);
         assert!(r.metric_f64("cv").unwrap() > CV_UNSTABLE);
     }
