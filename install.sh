@@ -24,10 +24,10 @@ fi
 say()  { printf '%b\n' "  $*"; }
 ok()   { printf '%b\n' "  ${G}✓${Z} $*"; }
 warn() { printf '%b\n' "  ${Y}!${Z} $*"; }
-die()  { printf '%b\n' "\n  ${R}安装失败${Z}: $*\n" >&2; exit 1; }
+die()  { printf '%b\n' "\n  ${R}Install failed${Z}: $*\n" >&2; exit 1; }
 
 need() {
-  command -v "$1" >/dev/null 2>&1 || die "缺少必需的命令 '$1'，请先安装后重试。"
+  command -v "$1" >/dev/null 2>&1 || die "required command '$1' not found; install it and try again."
 }
 
 # ── platform detection ────────────────────────────────────────────────────
@@ -37,12 +37,12 @@ detect_target() {
   case "$os" in
     Darwin) os_part="apple-darwin" ;;
     Linux)  os_part="unknown-linux-gnu" ;;
-    *) die "不支持的操作系统: ${os}。Windows 请改用 install.ps1。" ;;
+    *) die "unsupported operating system: ${os}. On Windows use install.ps1 instead." ;;
   esac
   case "$arch" in
     x86_64|amd64)  arch_part="x86_64" ;;
     arm64|aarch64) arch_part="aarch64" ;;
-    *) die "不支持的 CPU 架构: ${arch}。可用的架构为 x86_64 与 aarch64。" ;;
+    *) die "unsupported CPU architecture: ${arch}. Builds exist for x86_64 and aarch64." ;;
   esac
   if [ "$os_part" = "unknown-linux-gnu" ] && [ "$arch_part" = "aarch64" ]; then
     : # built and published
@@ -51,7 +51,7 @@ detect_target() {
 }
 
 # ── main ──────────────────────────────────────────────────────────────────
-printf '\n  %bllm-verify%b 安装程序\n\n' "$D" "$Z"
+printf '\n  %bllm-verify%b installer\n\n' "$D" "$Z"
 
 need uname
 need mkdir
@@ -63,22 +63,22 @@ elif command -v wget >/dev/null 2>&1; then
   DL="wget -qO-"
   DL_OUT="wget -qO"
 else
-  die "需要 curl 或 wget 之一来下载文件。"
+  die "needs either curl or wget to download."
 fi
 
 TARGET=$(detect_target)
-say "平台   : $TARGET"
+say "Platform : $TARGET"
 
 VERSION="${LLM_VERIFY_VERSION:-}"
 if [ -z "$VERSION" ]; then
-  say "查询最新版本…"
+  say "Resolving the latest version…"
   VERSION=$($DL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
     | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     | head -n 1) || true
-  [ -n "$VERSION" ] || die "无法获取最新版本号。可能是网络问题或 GitHub API 限流；也可以用 LLM_VERIFY_VERSION=v0.1.0 指定版本。"
+  [ -n "$VERSION" ] || die "could not resolve the latest version. The network may be down or the GitHub API rate-limited; you can pin one with LLM_VERIFY_VERSION=v0.2.0."
 fi
 NUM="${VERSION#v}"
-say "版本   : $VERSION"
+say "Version  : $VERSION"
 
 NAME="llm-verify-${NUM}-${TARGET}"
 ASSET="${NAME}.tar.gz"
@@ -88,13 +88,13 @@ TMP=$(mktemp -d 2>/dev/null || mktemp -d -t llm-verify)
 # shellcheck disable=SC2064
 trap "rm -rf '$TMP'" EXIT INT TERM
 
-say "下载   : $ASSET"
+say "Download : $ASSET"
 if ! $DL_OUT "$TMP/$ASSET" "$URL" 2>/dev/null; then
-  die "下载失败: $URL
-       该版本可能没有 $TARGET 的产物，或网络不可达。
-       可用产物见 https://github.com/$REPO/releases/tag/$VERSION"
+  die "download failed: $URL
+       That release may have no $TARGET artefact, or the network is unreachable.
+       See https://github.com/$REPO/releases/tag/$VERSION for what is available."
 fi
-[ -s "$TMP/$ASSET" ] || die "下载到的文件是空的: $URL"
+[ -s "$TMP/$ASSET" ] || die "the downloaded file was empty: $URL"
 
 # ── checksum ──────────────────────────────────────────────────────────────
 if command -v sha256sum >/dev/null 2>&1; then
@@ -111,59 +111,60 @@ if [ -n "$SHA_CMD" ] && $DL_OUT "$TMP/SHA256SUMS" \
   if [ -n "$expected" ]; then
     actual=$(cd "$TMP" && $SHA_CMD "$ASSET" | awk '{print $1}')
     if [ "$expected" = "$actual" ]; then
-      ok "校验通过 (sha256)"
+      ok "checksum verified (sha256)"
     else
-      die "校验和不匹配。
-       期望: $expected
-       实际: $actual
-       文件可能在传输中损坏，或来源不可信。已中止安装。"
+      die "checksum mismatch.
+       expected: $expected
+       actual:   $actual
+       The file was corrupted in transit, or came from somewhere untrusted.
+       Install aborted."
     fi
   else
-    warn "SHA256SUMS 中没有 $ASSET 的条目，跳过校验"
+    warn "no entry for $ASSET in SHA256SUMS; skipping verification"
   fi
 else
-  warn "无法校验和（缺少 sha256 工具或校验文件不可用）"
+  warn "cannot verify the checksum (no sha256 tool, or the checksum file is unavailable)"
 fi
 
 # ── unpack and install ────────────────────────────────────────────────────
-tar xzf "$TMP/$ASSET" -C "$TMP" || die "解压失败，压缩包可能已损坏。"
+tar xzf "$TMP/$ASSET" -C "$TMP" || die "extraction failed; the archive may be corrupt."
 SRC="$TMP/$NAME/$BIN"
-[ -f "$SRC" ] || die "压缩包结构不符合预期，未找到 $NAME/${BIN}。"
+[ -f "$SRC" ] || die "unexpected archive layout: $NAME/${BIN} not found."
 
-mkdir -p "$BIN_DIR" || die "无法创建目录 ${BIN_DIR}（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
+mkdir -p "$BIN_DIR" || die "could not create ${BIN_DIR} (permissions? set LLM_VERIFY_BIN_DIR to another location)"
 if ! install -m 755 "$SRC" "$BIN_DIR/$BIN" 2>/dev/null; then
-  cp "$SRC" "$BIN_DIR/$BIN" || die "无法写入 $BIN_DIR/${BIN}（权限不足？可用 LLM_VERIFY_BIN_DIR 换一个位置）"
+  cp "$SRC" "$BIN_DIR/$BIN" || die "could not write $BIN_DIR/${BIN} (permissions? set LLM_VERIFY_BIN_DIR to another location)"
   chmod 755 "$BIN_DIR/$BIN"
 fi
 
 # Verify it actually runs on this machine before declaring success.
 if ! "$BIN_DIR/$BIN" --version >/dev/null 2>&1; then
-  die "已安装到 $BIN_DIR/${BIN}，但无法执行。
-       可能是架构不匹配，或系统缺少所需的 libc 版本。"
+  die "installed to $BIN_DIR/${BIN}, but it will not run.
+       The architecture may not match, or the system libc may be too old."
 fi
-ok "已安装 $("$BIN_DIR/$BIN" --version) → $BIN_DIR/$BIN"
+ok "installed $("$BIN_DIR/$BIN" --version) → $BIN_DIR/$BIN"
 
 # ── PATH ──────────────────────────────────────────────────────────────────
 case ":${PATH}:" in
   *":$BIN_DIR:"*)
     printf '\n'
-    ok "$BIN_DIR 已在 PATH 中，直接运行： ${G}llm-verify${Z}"
+    ok "$BIN_DIR is on your PATH — just run ${G}llm-verify${Z}"
     ;;
   *)
     case "${SHELL:-}" in
       */zsh)  RC="~/.zshrc" ;;
       */bash) RC="~/.bashrc" ;;
       */fish) RC="~/.config/fish/config.fish" ;;
-      *)      RC="你的 shell 配置文件" ;;
+      *)      RC="your shell profile" ;;
     esac
     printf '\n'
-    warn "$BIN_DIR 不在 PATH 中。把下面这行加进 ${RC}："
+    warn "$BIN_DIR is not on your PATH. Add this line to ${RC}:"
     printf '\n      %bexport PATH="%s:$PATH"%b\n' "$G" "$BIN_DIR" "$Z"
-    printf '\n  然后重开终端，或先用完整路径运行：\n'
+    printf '\n  Then open a new terminal, or use the full path for now:\n'
     printf '      %b%s/%s --help%b\n' "$D" "$BIN_DIR" "$BIN" "$Z"
     ;;
 esac
 
-printf '\n  开始使用：\n'
+printf '\n  Get started:\n'
 printf '      %bllm-verify --base-url <URL> --api-key <KEY> --model <MODEL>%b\n' "$D" "$Z"
-printf '      %bllm-verify install-skill%b   # 装进 Claude Code / Codex / OpenCode / Gemini CLI\n\n' "$D" "$Z"
+printf '      %bllm-verify install-skill%b   # into Claude Code / Codex / OpenCode / Gemini CLI\n\n' "$D" "$Z"

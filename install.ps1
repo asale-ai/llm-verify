@@ -34,14 +34,14 @@ function Warn { param($m) Write-Host "  " -NoNewline; Write-Host "!" -Foreground
 function Die  {
     param($m)
     Write-Host ""
-    Write-Host "  安装失败: " -ForegroundColor Red -NoNewline
+    Write-Host "  Install failed: " -ForegroundColor Red -NoNewline
     Write-Host $m
     Write-Host ""
     exit 1
 }
 
 Write-Host ""
-Write-Host "  llm-verify 安装程序" -ForegroundColor DarkGray
+Write-Host "  llm-verify installer" -ForegroundColor DarkGray
 Write-Host ""
 
 # ── platform ──────────────────────────────────────────────────────────────
@@ -49,13 +49,13 @@ $arch = $env:PROCESSOR_ARCHITECTURE
 switch ($arch) {
     'AMD64' { $target = 'x86_64-pc-windows-msvc' }
     'ARM64' {
-        Die "暂无 Windows ARM64 的预编译产物。
-       可以用 x64 版本经模拟运行，或从源码构建：
+        Die "No prebuilt Windows ARM64 artefact yet.
+       Run the x64 build under emulation, or build from source:
        cargo install --git https://github.com/$Repo"
     }
-    default { Die "不支持的 CPU 架构: $arch。目前仅提供 x86_64。" }
+    default { Die "Unsupported CPU architecture: $arch. Only x86_64 is published." }
 }
-Say "平台   : $target"
+Say "Platform : $target"
 
 # TLS 1.2 is not the default on older Windows PowerShell hosts.
 try {
@@ -66,20 +66,20 @@ try {
 # ── version ───────────────────────────────────────────────────────────────
 $version = $env:LLM_VERIFY_VERSION
 if (-not $version) {
-    Say "查询最新版本…"
+    Say "Resolving the latest version…"
     try {
         $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
                                  -Headers @{ 'User-Agent' = 'llm-verify-installer' }
         $version = $rel.tag_name
     } catch {
-        Die "无法获取最新版本号：$($_.Exception.Message)
-       可能是网络问题或 GitHub API 限流。
-       也可以指定版本： `$env:LLM_VERIFY_VERSION='v0.1.0'; irm ... | iex"
+        Die "Could not resolve the latest version: $($_.Exception.Message)
+       The network may be down or the GitHub API rate-limited.
+       Pin one instead: `$env:LLM_VERIFY_VERSION='v0.2.0'; irm ... | iex"
     }
 }
-if (-not $version) { Die "GitHub 未返回可用的版本号。" }
+if (-not $version) { Die "GitHub returned no usable version tag." }
 $num = $version.TrimStart('v')
-Say "版本   : $version"
+Say "Version  : $version"
 
 # ── download ──────────────────────────────────────────────────────────────
 $name  = "llm-verify-$num-$target"
@@ -90,19 +90,19 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("llm-verify-" + [Guid]::NewGuid().T
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 try {
-    Say "下载   : $asset"
+    Say "Download : $asset"
     $zip = Join-Path $tmp $asset
     try {
         Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing `
                           -Headers @{ 'User-Agent' = 'llm-verify-installer' }
     } catch {
-        Die "下载失败: $url
+        Die "Download failed: $url
        $($_.Exception.Message)
-       该版本可能没有 $target 的产物。
-       可用产物见 https://github.com/$Repo/releases/tag/$version"
+       That release may have no $target artefact.
+       See https://github.com/$Repo/releases/tag/$version for what is available."
     }
     if (-not (Test-Path $zip) -or (Get-Item $zip).Length -eq 0) {
-        Die "下载到的文件是空的: $url"
+        Die "The downloaded file was empty: $url"
     }
 
     # ── checksum ──────────────────────────────────────────────────────────
@@ -117,43 +117,44 @@ try {
             $expected = ($line -split '\s+')[0].ToLower()
             $actual = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
             if ($expected -ne $actual) {
-                Die "校验和不匹配。
-       期望: $expected
-       实际: $actual
-       文件可能在传输中损坏，或来源不可信。已中止安装。"
+                Die "Checksum mismatch.
+       expected: $expected
+       actual:   $actual
+       The file was corrupted in transit, or came from somewhere untrusted.
+       Install aborted."
             }
-            Ok "校验通过 (sha256)"
+            Ok "Checksum verified (sha256)"
             $verified = $true
         }
     } catch { }
-    if (-not $verified) { Warn "无法校验和（校验文件不可用或缺少条目）" }
+    if (-not $verified) { Warn "Cannot verify the checksum (file unavailable, or no entry for this asset)" }
 
     # ── unpack ────────────────────────────────────────────────────────────
     try {
         Expand-Archive -Path $zip -DestinationPath $tmp -Force
     } catch {
-        Die "解压失败，压缩包可能已损坏：$($_.Exception.Message)"
+        Die "Extraction failed; the archive may be corrupt: $($_.Exception.Message)"
     }
     $src = Join-Path $tmp "$name\$Bin"
-    if (-not (Test-Path $src)) { Die "压缩包结构不符合预期，未找到 $name\$Bin。" }
+    if (-not (Test-Path $src)) { Die "Unexpected archive layout: $name\$Bin not found." }
 
     # ── install ───────────────────────────────────────────────────────────
     try {
         New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
         Copy-Item -Path $src -Destination (Join-Path $BinDir $Bin) -Force
     } catch {
-        Die "无法写入 $BinDir：$($_.Exception.Message)
-       可能是权限不足或该文件正在运行。
-       可用 `$env:LLM_VERIFY_BIN_DIR 指定其它位置。"
+        Die "Could not write to $BinDir: $($_.Exception.Message)
+       Permissions, or the file is currently running.
+       Set `$env:LLM_VERIFY_BIN_DIR to another location."
     }
 
     $exe = Join-Path $BinDir $Bin
     try {
         $ver = & $exe --version 2>$null
     } catch {
-        Die "已安装到 $exe，但无法执行：$($_.Exception.Message)"
+        Die "Installed to $exe, but it will not run: $($_.Exception.Message)"
     }
-    Ok "已安装 $ver → $exe"
+    Ok "Installed $ver → $exe"
 }
 finally {
     Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -163,24 +164,24 @@ finally {
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -and ($userPath -split ';' | Where-Object { $_.TrimEnd('\') -ieq $BinDir.TrimEnd('\') })) {
     Write-Host ""
-    Ok "$BinDir 已在 PATH 中，重开终端后直接运行： llm-verify"
+    Ok "$BinDir is already on your PATH — open a new terminal and run llm-verify"
 } else {
     try {
         $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
         [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
         $env:Path = "$env:Path;$BinDir"
         Write-Host ""
-        Ok "已把 $BinDir 加入用户 PATH（新开的终端生效）"
+        Ok "Added $BinDir to your user PATH (takes effect in new terminals)"
     } catch {
         Write-Host ""
-        Warn "无法自动修改 PATH：$($_.Exception.Message)"
-        Write-Host "      请手动把下面的目录加入 PATH："
+        Warn "Could not update PATH automatically: $($_.Exception.Message)"
+        Write-Host "      Add this directory to your PATH manually:"
         Write-Host "      $BinDir" -ForegroundColor Green
     }
 }
 
 Write-Host ""
-Write-Host "  开始使用："
+Write-Host "  Get started:"
 Write-Host "      llm-verify --base-url <URL> --api-key <KEY> --model <MODEL>" -ForegroundColor DarkGray
-Write-Host "      llm-verify install-skill   # 装进 Claude Code / Codex / OpenCode / Gemini CLI" -ForegroundColor DarkGray
+Write-Host "      llm-verify install-skill   # into Claude Code / Codex / OpenCode / Gemini CLI" -ForegroundColor DarkGray
 Write-Host ""
