@@ -154,26 +154,58 @@ ok "已推送标签 $TAG"
 
 # ── watch the release ─────────────────────────────────────────────────────
 step "发布工作流"
-if command -v gh >/dev/null 2>&1; then
-  info "已触发 release 工作流，正在等待…"
-  sleep 8
-  RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId \
-             --jq '.[0].databaseId' 2>/dev/null || true)
-  if [ -n "$RUN_ID" ]; then
-    info "运行 ID: $RUN_ID"
-    if gh run watch "$RUN_ID" --exit-status 2>/dev/null; then
-      ok "构建成功"
-      gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | sed 's/^/    /'
-      ok "发布完成: $(gh repo view --json url --jq .url)/releases/tag/$TAG"
-    else
-      die "发布工作流失败。查看日志： gh run view $RUN_ID --log-failed"
-    fi
-  else
-    info "未能定位工作流运行，请手动查看： gh run list --workflow=release.yml"
-  fi
-else
+if ! command -v gh >/dev/null 2>&1; then
   info "未安装 gh CLI，无法自动跟踪。"
   info "查看进度: https://github.com/asale-ai/llm-verify/actions"
+  printf '\n'
+  exit 0
 fi
+
+# Find the run for *this* tag rather than taking the newest run blindly: a
+# concurrent push would otherwise have us watching someone else's build. The
+# run does not appear instantly, so poll for it.
+info "等待 release 工作流出现…"
+RUN_ID=""
+for _ in $(seq 1 30); do
+  RUN_ID=$(gh run list --workflow=release.yml --limit 20 \
+             --json databaseId,headBranch,event \
+             --jq "[.[] | select(.headBranch == \"$TAG\")] | .[0].databaseId" 2>/dev/null || true)
+  [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] && break
+  RUN_ID=""
+  sleep 4
+done
+
+if [ -z "$RUN_ID" ]; then
+  info "未能定位 $TAG 的工作流运行。"
+  info "手动查看： gh run list --workflow=release.yml"
+  printf '\n'
+  exit 0
+fi
+info "运行 ID: $RUN_ID"
+
+# Poll the conclusion directly. `gh run watch --exit-status` was flaky here:
+# invoked in the seconds after a run is created it can return non-zero for a
+# run that goes on to succeed, which turned a good release into a false alarm.
+CONCLUSION=""
+for _ in $(seq 1 240); do
+  read -r STATUS CONCLUSION <<<"$(gh run view "$RUN_ID" --json status,conclusion \
+      --jq '"\(.status) \(.conclusion // "")"' 2>/dev/null || echo "unknown ")"
+  [ "$STATUS" = "completed" ] && break
+  sleep 5
+done
+
+case "$CONCLUSION" in
+  success)
+    ok "构建成功"
+    gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | sed 's/^/    /'
+    ok "发布完成: $(gh repo view --json url --jq .url)/releases/tag/$TAG"
+    ;;
+  "")
+    info "工作流仍在运行（已等待 20 分钟）。查看： gh run view $RUN_ID"
+    ;;
+  *)
+    die "发布工作流 $CONCLUSION。查看日志： gh run view $RUN_ID --log-failed"
+    ;;
+esac
 
 printf '\n'
