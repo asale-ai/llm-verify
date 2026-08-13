@@ -37,6 +37,27 @@ LLM_VERIFY_MODEL=claude-opus-4-5
 llm-verify
 ```
 
+### Example run
+
+Probing `gpt-5.6-sol` through OpenRouter at the default `balanced` depth — 40 probes, 47 requests, 133.8s:
+
+![Probe run](docs/ScreenShot_1.png)
+
+The summary that follows carries the verdict, the two axes, and the per-group scores:
+
+![Verdict summary](docs/ScreenShot_2.png)
+
+`Relayed` / `Relay`: a real model, reached through one hop. Channel provenance and performance are what drag the groups down, not identity or billing.
+
+Full HTML reports from two runs against the same model:
+
+| Report | Verdict | Origin | Score |
+|---|---|---|---|
+| [openrouter.ai](docs/llm-verify-openrouter-ai-20260813-072401.html) ([preview](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-openrouter-ai-20260813-072401.html)) | Relayed | Relay | 92 / 100 |
+| [gw.asale.ai](docs/llm-verify-gw-asale-ai-20260813-071343.html) ([preview](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-gw-asale-ai-20260813-071343.html)) | Suspicious | Reconstructed channel | 88 / 100 |
+
+The second still scores 88, a high number, and is nonetheless called *suspicious* — several anomalies landing at once outweigh a good weighted score. Score and verdict are separate readings.
+
 ### Options
 
 | Flag | Meaning |

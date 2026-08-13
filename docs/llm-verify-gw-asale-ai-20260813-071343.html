@@ -1,0 +1,434 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="report-language" content="en">
+<title>llm-verify · gw.asale.ai</title>
+<style>
+:root{
+  --ground:#F5F7F8; --surface:#FFFFFF; --surface-2:#EAEEF1; --surface-3:#DFE5E9;
+  --ink:#131A1D; --ink-2:#3C484F; --muted:#68757E;
+  --rule:#D8E0E4; --rule-2:#BCC7CD;
+  --accent:#0D5A66; --accent-2:#0A454F; --accent-wash:#DBEDEF;
+  --pass:#1B6E48; --warn:#8C6115; --fail:#A3352B; --skip:#7A868D;
+  --pass-bg:#E3F2E9; --warn-bg:#FBF0DC; --fail-bg:#FBE5E2; --skip-bg:#ECEFF1;
+  --shadow:0 1px 2px rgba(16,26,30,.05),0 8px 24px -12px rgba(16,26,30,.14);
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1114; --surface:#151B1F; --surface-2:#1D252A; --surface-3:#263036;
+    --ink:#E2E8EB; --ink-2:#B0BCC3; --muted:#839099;
+    --rule:#232C32; --rule-2:#33414A;
+    --accent:#4EA8B6; --accent-2:#7FC7D2; --accent-wash:#102E34;
+    --pass:#4FAE81; --warn:#C99A45; --fail:#DB7568; --skip:#78868E;
+    --pass-bg:#12291F; --warn-bg:#2B2213; --fail-bg:#2E1A18; --skip-bg:#1D2429;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1114; --surface:#151B1F; --surface-2:#1D252A; --surface-3:#263036;
+  --ink:#E2E8EB; --ink-2:#B0BCC3; --muted:#839099;
+  --rule:#232C32; --rule-2:#33414A;
+  --accent:#4EA8B6; --accent-2:#7FC7D2; --accent-wash:#102E34;
+  --pass:#4FAE81; --warn:#C99A45; --fail:#DB7568; --skip:#78868E;
+  --pass-bg:#12291F; --warn-bg:#2B2213; --fail-bg:#2E1A18; --skip-bg:#1D2429;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+     font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 26px}
+h1,h2,h3{font-family:var(--mono);font-weight:600;letter-spacing:-.01em;margin:0;text-wrap:balance}
+
+/* ── entrance animation ─────────────────────────────── */
+.rise{opacity:0;transform:translateY(14px);animation:rise .55s cubic-bezier(.2,.7,.3,1) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){
+  .rise{animation:none;opacity:1;transform:none}
+  .donut-ring,.bar-fill,.gauge-needle,.dist-bar{animation:none !important}
+  .donut-ring{stroke-dashoffset:var(--final) !important}
+  .bar-fill{width:var(--w) !important}
+  .dist-bar{height:var(--h) !important}
+}
+
+/* ── masthead ───────────────────────────────────────── */
+.mast{background:var(--surface);border-bottom:1px solid var(--rule)}
+.mast .wrap{padding:30px 26px 26px}
+.brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.brand .name{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--accent)}
+.brand .ver{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.target{margin-top:14px;display:grid;gap:4px 22px;
+        grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+        font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+.target b{color:var(--muted);font-weight:500;margin-right:6px}
+.target span{overflow-wrap:anywhere}
+
+/* ── hero ───────────────────────────────────────────── */
+.hero{display:grid;grid-template-columns:auto 1fr;gap:32px;align-items:center;
+      padding:30px 0 6px}
+@media (max-width:720px){.hero{grid-template-columns:1fr;gap:20px}}
+.donut{position:relative;width:168px;height:168px;flex:0 0 auto}
+.donut svg{transform:rotate(-90deg)}
+.donut-track{fill:none;stroke:var(--surface-3);stroke-width:13}
+.donut-ring{fill:none;stroke-width:13;stroke-linecap:round;
+            stroke-dasharray:var(--circ);stroke-dashoffset:var(--circ);
+            animation:draw 1.3s cubic-bezier(.25,.8,.3,1) .25s forwards}
+@keyframes draw{to{stroke-dashoffset:var(--final)}}
+.donut-label{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+.donut-label .n{font-family:var(--mono);font-size:38px;font-weight:600;line-height:1;
+                font-variant-numeric:tabular-nums}
+.donut-label .u{font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:.1em}
+
+.verdict-chip{display:inline-flex;align-items:center;gap:9px;padding:7px 15px;border-radius:999px;
+              font-weight:600;font-size:15px;border:1px solid transparent}
+.verdict-chip .dot{width:9px;height:9px;border-radius:50%;background:currentColor;
+                   animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.v-good{background:var(--pass-bg);color:var(--pass);border-color:color-mix(in srgb,var(--pass) 30%,transparent)}
+.v-mid{background:var(--accent-wash);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+.v-warn{background:var(--warn-bg);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.v-bad{background:var(--fail-bg);color:var(--fail);border-color:color-mix(in srgb,var(--fail) 30%,transparent)}
+.v-none{background:var(--skip-bg);color:var(--skip);border-color:var(--rule-2)}
+
+.hero-body h1{font-size:clamp(23px,3.2vw,31px);margin:14px 0 8px}
+.hero-body p{margin:0;color:var(--ink-2);max-width:62ch}
+.hero-meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-family:var(--mono);font-size:11.5px;padding:4px 10px;border-radius:5px;
+      background:var(--surface-2);color:var(--ink-2);border:1px solid var(--rule)}
+.pill b{color:var(--ink);font-weight:600}
+
+/* ── gate alert ─────────────────────────────────────── */
+.gates{margin:22px 0 0;border:1px solid color-mix(in srgb,var(--fail) 40%,transparent);
+       border-radius:9px;background:var(--fail-bg);overflow:hidden}
+.gates header{padding:12px 18px;font-family:var(--mono);font-size:13px;font-weight:600;
+              color:var(--fail);border-bottom:1px solid color-mix(in srgb,var(--fail) 25%,transparent);
+              display:flex;align-items:center;gap:9px}
+.gates ul{margin:0;padding:12px 18px 14px 36px}
+.gates li{margin-bottom:6px;font-size:14px;color:var(--ink)}
+.gates li b{font-family:var(--mono);font-size:13px}
+
+/* ── layout ─────────────────────────────────────────── */
+section{padding:34px 0;border-top:1px solid var(--rule)}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:5px;flex-wrap:wrap}
+.sec-head h2{font-size:18px}
+.sec-head .hint{font-size:13px;color:var(--muted)}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(178px,1fr))}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:9px;
+      padding:17px 19px;box-shadow:var(--shadow)}
+.card h3{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+         margin-bottom:11px}
+
+/* ── stat tiles ─────────────────────────────────────── */
+.stat .v{font-family:var(--mono);font-size:29px;font-weight:600;line-height:1.15;
+         font-variant-numeric:tabular-nums}
+.stat .s{font-size:12.5px;color:var(--muted);margin-top:3px}
+.stat .v.good{color:var(--pass)} .stat .v.warn{color:var(--warn)} .stat .v.bad{color:var(--fail)}
+
+/* ── bars ───────────────────────────────────────────── */
+.bars{display:grid;gap:9px}
+.bar-row{display:grid;grid-template-columns:96px 1fr 52px;gap:11px;align-items:center;font-size:13px}
+.bar-row .lbl{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:9px;border-radius:5px;background:var(--surface-3);overflow:hidden}
+.bar-fill{height:100%;border-radius:5px;width:0;animation:grow 1s cubic-bezier(.22,.8,.3,1) forwards}
+@keyframes grow{to{width:var(--w)}}
+.bar-row .num{font-family:var(--mono);font-size:12.5px;text-align:right;
+              font-variant-numeric:tabular-nums;color:var(--ink-2)}
+
+/* ── billing comparison ─────────────────────────────── */
+.cmp{display:grid;gap:12px;margin-top:4px}
+.cmp-row .top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px}
+.cmp-row .top .k{color:var(--muted)}
+.cmp-row .top .n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.ratio-note{margin-top:13px;padding:11px 14px;border-radius:7px;font-size:13.5px;line-height:1.6}
+.ratio-ok,.v-good.ratio-note{background:var(--pass-bg);color:var(--pass)}
+.ratio-hi{background:var(--warn-bg);color:var(--warn)}
+.ratio-bad{background:var(--fail-bg);color:var(--fail)}
+
+/* ── distribution chart ─────────────────────────────── */
+.dist{display:flex;align-items:flex-end;gap:4px;height:96px;padding-top:8px}
+.dist-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;min-width:5px}
+.dist-bar{width:100%;border-radius:3px 3px 0 0;background:var(--accent);height:0;
+          animation:rise-bar .8s cubic-bezier(.22,.8,.3,1) forwards;opacity:.85}
+@keyframes rise-bar{to{height:var(--h)}}
+.dist-axis{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;
+           color:var(--muted);margin-top:6px;border-top:1px solid var(--rule);padding-top:5px}
+
+/* ── hop chain ──────────────────────────────────────── */
+.chain{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.hop{font-family:var(--mono);font-size:12px;padding:5px 11px;border-radius:6px;
+     background:var(--accent-wash);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 26%,transparent)}
+.hop.you{background:var(--surface-2);color:var(--ink-2);border-color:var(--rule)}
+.arrow{color:var(--muted);font-family:var(--mono);font-size:13px}
+
+/* ── evidence lists ─────────────────────────────────── */
+.ev{margin:0;padding-left:19px;font-size:13.5px;color:var(--ink-2)}
+.ev li{margin-bottom:4px}
+
+/* ── probe table ────────────────────────────────────── */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:660px;font-size:13.5px}
+thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+         color:var(--muted);font-weight:600;text-align:left;padding:10px 14px;
+         background:var(--surface-2);border-bottom:1px solid var(--rule-2);white-space:nowrap}
+tbody td{padding:9px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr.grp td{background:var(--surface-2);font-family:var(--mono);font-size:11.5px;
+                letter-spacing:.06em;color:var(--muted);padding:7px 14px}
+td.st{width:74px;white-space:nowrap}
+td.pid{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+td.plabel{font-weight:600;white-space:nowrap}
+td.psum{color:var(--ink-2)}
+td.pms{font-family:var(--mono);font-size:12px;text-align:right;color:var(--muted);
+       white-space:nowrap;font-variant-numeric:tabular-nums}
+.tag{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;
+     font-weight:600;padding:2px 8px;border-radius:4px}
+.tag.pass{background:var(--pass-bg);color:var(--pass)}
+.tag.warn{background:var(--warn-bg);color:var(--warn)}
+.tag.fail{background:var(--fail-bg);color:var(--fail)}
+.tag.skip{background:var(--skip-bg);color:var(--skip)}
+.tag.err{background:var(--fail-bg);color:var(--fail)}
+details.detail{margin-top:6px}
+details.detail summary{cursor:pointer;font-size:12px;color:var(--accent);font-family:var(--mono);
+                       list-style:none;display:inline-block;padding:1px 0}
+details.detail summary::-webkit-details-marker{display:none}
+details.detail summary:before{content:"▸ ";transition:none}
+details.detail[open] summary:before{content:"▾ "}
+details.detail summary:hover{text-decoration:underline}
+.detail-body{margin-top:7px;padding:10px 13px;background:var(--surface-2);border-radius:6px;
+             font-size:12.5px;color:var(--ink-2);border-left:2px solid var(--rule-2)}
+.detail-body ul{margin:0 0 7px;padding-left:17px}
+.detail-body pre{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;
+                 font-family:var(--mono);font-size:11.5px;color:var(--ink);
+                 background:var(--surface);padding:9px 11px;border-radius:5px;
+                 border:1px solid var(--rule);max-height:230px;overflow:auto}
+.kv{display:flex;flex-wrap:wrap;gap:5px 9px;margin-top:5px}
+.kv code{font-family:var(--mono);font-size:11px;background:var(--surface);padding:1px 6px;
+         border-radius:4px;border:1px solid var(--rule);color:var(--ink-2)}
+
+/* ── trace / notes ──────────────────────────────────── */
+ol.trace{margin:0;padding-left:22px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+ol.trace li{margin-bottom:4px}
+.note{border-left:3px solid var(--accent);background:var(--surface);padding:14px 18px;
+      border-radius:0 7px 7px 0;font-size:13.5px;line-height:1.7;color:var(--ink-2)}
+.note b{color:var(--ink)}
+.note.warnbox{border-left-color:var(--warn)}
+.limits{margin:0;padding-left:20px;font-size:13.5px;color:var(--ink-2)}
+.limits li{margin-bottom:5px}
+
+footer{padding:26px 0 46px;color:var(--muted);font-size:12px;font-family:var(--mono);
+       border-top:1px solid var(--rule);margin-top:10px}
+footer p{margin:3px 0;overflow-wrap:anywhere}
+</style>
+<header class="mast"><div class="wrap">
+<div class="brand"><span class="name">llm-verify</span><span class="ver">v0.2.2 · 2026-08-13T07:10:25Z</span></div>
+<div class="target">
+<div><b>Endpoint</b><span>https://gw.asale.ai/v1</span></div>
+<div><b>Model</b><span>gpt-5.6-sol</span></div>
+<div><b>Protocol</b><span>openai</span></div>
+<div><b>Depth</b><span>balanced</span></div>
+</div></div></header><div class="wrap"><div class="hero">
+<div class="donut">
+<svg width="168" height="168" viewBox="0 0 168 168" role="img" aria-label="Overall score 88.1 out of 100">
+<circle class="donut-track" cx="84" cy="84" r="64"></circle>
+<circle class="donut-ring" cx="84" cy="84" r="64"
+        style="--circ:402.12;--final:47.85;stroke:var(--pass)"></circle>
+</svg>
+<div class="donut-label"><div class="n">88</div><div class="u">/ 100</div></div>
+</div>
+<div class="hero-body">
+<span class="verdict-chip v-warn"><span class="dot"></span>Suspicious</span>
+<h1>gw.asale.ai</h1>
+<p>Several anomalies at once. Possibly tampered with, downgraded, or served through a reconstructed channel.</p>
+<div class="hero-meta">
+<span class="pill"><b>Origin</b> Reconstructed channel</span>
+<span class="pill"><b>Identity</b> Matches the claim</span>
+<span class="pill"><b>Confidence</b> 70%</span>
+<span class="pill"><b>Probes</b> 30 passed / 5 warned / 4 failed</span>
+<span class="pill"><b>Requests</b> 47 · 198.1s</span>
+</div>
+</div></div></div><main class="wrap"><section class="rise"><div class="sec-head"><h2>Key numbers</h2>
+<span class="hint">The state of this endpoint at a glance</span></div><div class="grid g4"><div class="card stat"><h3>Billing ratio</h3><div class="v good">0.81x</div><div class="s">billed 938 / actual 1164 tokens</div></div><div class="card stat"><h3>TTFT P50</h3><div class="v bad">7224ms</div><div class="s">P95 11568ms · 4 samples</div></div><div class="card stat"><h3>Throughput</h3><div class="v ">84</div><div class="s">tok/s · in between</div></div><div class="card stat"><h3>Probe coverage</h3><div class="v good">100%</div><div class="s">1 did not run</div></div></div></section><section class="rise"><div class="sec-head"><h2>Scores by group</h2>
+<span class="hint">Locate which layer the problems are in</span></div><div class="card"><div class="bars"><div class="bar-row"><div class="lbl" title="Is this a genuine API channel?">Protocol contract</div>
+<div class="bar-track"><div class="bar-fill" style="--w:80.4%;background:var(--warn)"></div></div>
+<div class="num">80.4</div></div><div class="bar-row"><div class="lbl" title="Does streaming follow the protocol, or arrive empty?">Streaming</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100.0%;background:var(--pass)"></div></div>
+<div class="num">100.0</div></div><div class="bar-row"><div class="lbl" title="Are the token counts honest, or are you overcharged?">Metering &amp; billing</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100.0%;background:var(--pass)"></div></div>
+<div class="num">100.0</div></div><div class="bar-row"><div class="lbl" title="What relays sit on this path?">Channel provenance</div>
+<div class="bar-track"><div class="bar-fill" style="--w:50.0%;background:var(--fail)"></div></div>
+<div class="num">50.0</div></div><div class="bar-row"><div class="lbl" title="First-token latency, throughput and jitter">Performance</div>
+<div class="bar-track"><div class="bar-fill" style="--w:20.0%;background:var(--fail)"></div></div>
+<div class="num">20.0</div></div><div class="bar-row"><div class="lbl" title="Is the model behind this the one that was sold?">Model identity</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100.0%;background:var(--pass)"></div></div>
+<div class="num">100.0</div></div><div class="bar-row"><div class="lbl" title="Does the endpoint behave the same way every time?">Cross-request consistency</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100.0%;background:var(--pass)"></div></div>
+<div class="num">100.0</div></div></div></div></section><section class="rise"><div class="sec-head"><h2>Model identity</h2>
+<span class="hint">Is the model behind this the one that was sold?</span></div><div class="grid g2"><div class="card"><h3>Claimed vs measured</h3>
+<div class="cmp">
+<div class="cmp-row"><div class="top"><span class="k">Claimed model</span><span class="n">gpt-5.6-sol</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Claimed family / tier</span><span class="n">openai / unknown</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Measured family</span><span class="n">openai (confidence 48%)</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Measured tier</span><span class="n">large (fit 0.77)</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Tier verdict rests on</span><span class="n">0 questions · beat runner-up by 0.247</span></div></div>
+</div>
+<div class="ratio-note v-good" style="margin-top:14px">Matches the claim</div>
+</div><div class="card"><h3>Tier hypothesis fit</h3><div class="bars"><div class="bar-row"><div class="lbl">flagship ●</div>
+<div class="bar-track"><div class="bar-fill" style="--w:76.6%;background:var(--accent)"></div></div>
+<div class="num">0.77</div></div><div class="bar-row"><div class="lbl">mid</div>
+<div class="bar-track"><div class="bar-fill" style="--w:51.9%;background:var(--rule-2)"></div></div>
+<div class="num">0.52</div></div><div class="bar-row"><div class="lbl">light</div>
+<div class="bar-track"><div class="bar-fill" style="--w:29.1%;background:var(--rule-2)"></div></div>
+<div class="num">0.29</div></div></div><h3 style="margin-top:16px">Accuracy by difficulty</h3><div class="bars"><div class="bar-row"><div class="lbl">easy</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100%;background:var(--pass)"></div></div>
+<div class="num">100%</div></div><div class="bar-row"><div class="lbl">medium</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100%;background:var(--pass)"></div></div>
+<div class="num">100%</div></div><div class="bar-row"><div class="lbl">hard</div>
+<div class="bar-track"><div class="bar-fill" style="--w:100%;background:var(--pass)"></div></div>
+<div class="num">100%</div></div></div></div><div class="card" style="grid-column:1/-1"><h3>Identity evidence</h3><ul class="ev"><li>Self-identification: OpenAI o3 — OpenAI</li><li>The creator answer also points to openai</li><li>Measured capability tier: large (fit 0.77)</li></ul></div></div></section><section class="rise"><div class="sec-head"><h2>Metering &amp; billing</h2>
+<span class="hint">Are the token counts honest, or are you overcharged?</span></div><div class="grid g2"><div class="card"><h3>Input tokens: billed vs independent recount</h3><div class="cmp">
+<div class="cmp-row"><div class="top"><span class="k">Endpoint billed</span><span class="n">938</span></div>
+<div class="bar-track"><div class="bar-fill" style="--w:80.6%;background:var(--pass)"></div></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Independent recount</span><span class="n">1164</span></div>
+<div class="bar-track"><div class="bar-fill" style="--w:100.0%;background:var(--accent)"></div></div></div>
+</div>
+<div class="ratio-note ratio-ok">Billing ratio 0.81x, within the normal range</div>
+<div style="margin-top:11px;font-size:12.5px;color:var(--muted)">Compared against: local estimate (this protocol has no count_tokens)</div>
+</div><div class="card"><h3>Cost</h3><div class="note warnbox" style="border-radius:7px">No price entry for gpt-5.6-sol; no currency figure applied</div></div></div></section><section class="rise"><div class="sec-head"><h2>Performance</h2>
+<span class="hint">Latency, throughput and jitter — also identity evidence</span></div><div class="grid g2"><div class="card"><h3>Time to first token (ms)</h3><div class="dist"><div class="dist-col"><div class="dist-bar" style="--h:13.0%;animation-delay:0.30s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:62.4%;animation-delay:0.35s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:73.1%;animation-delay:0.40s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:100.0%;animation-delay:0.45s"></div></div></div><div class="dist-axis"><span>min 1500ms</span><span>4 samples</span><span>max 11568ms</span></div></div><div class="card"><h3>End-to-end latency (ms)</h3><div class="dist"><div class="dist-col"><div class="dist-bar" style="--h:16.5%;animation-delay:0.30s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:16.9%;animation-delay:0.35s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:66.1%;animation-delay:0.40s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:71.9%;animation-delay:0.45s"></div></div><div class="dist-col"><div class="dist-bar" style="--h:100.0%;animation-delay:0.50s"></div></div></div><div class="dist-axis"><span>min 2212ms</span><span>5 samples</span><span>max 13383ms</span></div></div><div class="card" style="grid-column:1/-1"><h3>Summary</h3><div class="grid g4" style="gap:11px"><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">TTFT P50</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">7224 ms</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">TTFT P95</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">11568 ms</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">Latency P50</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">8842 ms</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">Latency P95</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">13383 ms</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">Mean throughput</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">84.2 tok/s</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">Coefficient of variation</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">0.67</div></div><div><div style="font-size:11.5px;color:var(--muted);font-family:var(--mono)">Samples</div>
+<div style="font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums">5</div></div></div><div class="ratio-note ratio-hi" style="margin-top:14px">A coefficient of variation of 0.67 is high: a scattered latency distribution on one endpoint is typical of round-robin across several providers, or heavy oversubscription.</div></div></div></section><section class="rise"><div class="sec-head"><h2>Channel provenance</h2>
+<span class="hint">What the request passes through before it reaches the model</span></div><div class="card"><div class="chain"><span class="hop you">your request</span><span class="arrow">→</span><span class="hop">Unknown proxy</span><span class="arrow">→</span><span class="hop you">model</span></div><div class="cmp"><div class="cmp-row"><div class="top">
+<span class="k">Classified as</span><span class="n">Unknown proxy (tier-3 signal, 0% confidence)</span></div></div>
+<div class="cmp-row"><div class="top"><span class="k">Origin category</span><span class="n">Reconstructed channel</span></div></div></div>
+<div style="margin-top:11px;font-size:13px;color:var(--ink-2)">Several first-party capabilities are missing, matching an interface reconstructed from a web session.</div></div></section><section class="rise"><div class="sec-head"><h2>Probe detail</h2>
+<span class="hint">40 probes; expand any row for evidence and the raw response</span></div>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Status</th><th>ID</th><th>Probe</th><th>Conclusion</th><th style="text-align:right">Took</th></tr></thead>
+<tbody><tr class="grp"><td colspan="5">Protocol contract — Is this a genuine API channel?</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">preflight</td><td class="plabel">Connectivity preflight</td><td class="psum">Endpoint reachable, 4697ms<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>duration_ms=4697</code><code>status=200</code></div></div></details></td><td class="pms">4697ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">model_catalog</td><td class="plabel">Model catalogue</td><td class="psum">327 models listed, including the target<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>catalog_size=327</code><code>target_listed=true</code></div></div></details></td><td class="pms">1846ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">schema</td><td class="plabel">Response schema</td><td class="psum">All required fields present, ID format correct<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>id_prefix_ok=true</code><code>missing_field_count=0</code></div><pre>OK</pre></div></details></td><td class="pms">2263ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">model_echo</td><td class="plabel">Echoed model field</td><td class="psum">Echo matches: gpt-5.6-sol<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>requested=gpt-5.6-sol</code><code>returned=gpt-5.6-sol</code></div></div></details></td><td class="pms">2487ms</td></tr><tr><td class="st"><span class="tag skip">– skip</span></td>
+<td class="pid">missing_version</td><td class="plabel">Missing version header rejected</td><td class="psum">Only applies to the Anthropic protocol</td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">missing_auth</td><td class="plabel">Missing auth rejected</td><td class="psum">Rejected an unauthenticated request, as specified<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>status=401</code></div></div></details></td><td class="pms">310ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">invalid_model</td><td class="plabel">Invalid model hard-fails</td><td class="psum">Rejected as expected (HTTP 400)<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>probe_model=gpt-5.6-sol-nonexistent-E40A1C</code><code>status=400</code></div></div></details></td><td class="pms">314ms</td></tr><tr><td class="st"><span class="tag warn">! warn</span></td>
+<td class="pid">error_envelope</td><td class="plabel">Error envelope</td><td class="psum">The error response was not JSON<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>status=400</code></div><pre>Failed to parse the request body as JSON: messages: EOF while parsing a list at line 1 column 50</pre></div></details></td><td class="pms">328ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">stop_reason</td><td class="plabel">stop_reason is valid</td><td class="psum">stop_reason = stop<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>stop_reason=stop</code></div></div></details></td><td class="pms">2426ms</td></tr><tr><td class="st"><span class="tag fail">✗ fail</span></td>
+<td class="pid">max_tokens</td><td class="plabel">max_tokens truncation</td><td class="psum">Produced 432 tokens, over the requested cap of 16<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>max_tokens was ignored or rewritten by a middle layer</li></ul><div class="kv"><code>max_tokens=16</code><code>output_tokens=432</code><code>stop_reason=stop</code></div><pre>1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+5…</pre></div></details></td><td class="pms">12081ms</td></tr><tr><td class="st"><span class="tag fail">✗ fail</span></td>
+<td class="pid">stop_sequence</td><td class="plabel">stop_sequences honoured</td><td class="psum">The stop sequence appears in the output, so it did not take effect<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>stop_sequences was dropped by a middle layer</li></ul><div class="kv"><code>marker_leaked=true</code><code>stop_marker=&lt;&lt;545B&gt;&gt;</code><code>stop_reason=stop</code></div><pre>ALPHA &lt;&lt;545B&gt;&gt; BETA</pre></div></details></td><td class="pms">2930ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">system_adherence</td><td class="plabel">System prompt delivery</td><td class="psum">System prompt arrived intact (the model repeated a marker only it contained)<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>echoed=true</code><code>token=34C5C4</code></div><pre>34C5C4</pre></div></details></td><td class="pms">3003ms</td></tr><tr class="grp"><td colspan="5">Streaming — Does streaming follow the protocol, or arrive empty?</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">sse_format</td><td class="plabel">SSE event sequence</td><td class="psum">37 events, well-formed, [DONE] present<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>bytes=6646</code><code>content_type=text/event-stream</code><code>event_count=37</code><code>saw_done=true</code><code>ttft_ms=1500</code></div><pre>1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12</pre></div></details></td><td class="pms">2212ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">stream_body</td><td class="plabel">Stream carries a body</td><td class="psum">6646 bytes / 37 characters of content<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>bytes=6646</code><code>status=200</code><code>text_len=37</code></div><pre>1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12</pre></div></details></td><td class="pms">2265ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">stream_usage</td><td class="plabel">Streamed usage reporting</td><td class="psum">usage reported normally: 22 in / 38 out<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>estimated_output_tokens=12</code><code>input_tokens=22</code><code>output_tokens=38</code><code>usage_absent=false</code></div></div></details></td><td class="pms">2768ms</td></tr><tr class="grp"><td colspan="5">Metering &amp; billing — Are the token counts honest, or are you overcharged?</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">token_recount</td><td class="plabel">Independent token recount</td><td class="psum">Metering agrees, ratio 0.81x (via local estimate (this protocol has no count_tokens))<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>absolute_delta=0</code><code>authoritative=false</code><code>billed_input=938</code><code>honest_input=1164</code><code>method=local estimate (this protocol has no count_tokens)</code><code>ratio=0.806</code></div></div></details></td><td class="pms">2655ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">input_inflation</td><td class="plabel">Hidden prompt inflation</td><td class="psum">Minimal prompt billed at 7 tokens; no sign of injection<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>baseline_estimate=3</code><code>billed_input=7</code><code>threshold=50</code></div></div></details></td><td class="pms">3305ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">output_inflation</td><td class="plabel">Output token check</td><td class="psum">Output billing is reasonable: 14 tokens<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>billed_output=14</code><code>estimated_output=13</code><code>ratio=1.077</code></div><pre>The quick brown fox jumps over the lazy dog.</pre></div></details></td><td class="pms">3234ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">usage_present</td><td class="plabel">usage field completeness</td><td class="psum">usage complete: 8 in / 5 out<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>cache_create_tokens=0</code><code>cache_read_tokens=0</code><code>input_tokens=8</code><code>output_tokens=5</code><code>present=true</code></div></div></details></td><td class="pms">4835ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">cost_ratio</td><td class="plabel">Overall billing ratio</td><td class="psum">Overall billing ratio 0.81x, within the normal range<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>No price entry for gpt-5.6-sol; reporting the token ratio only, no currency figure</li></ul><div class="kv"><code>absolute_delta=0</code><code>billed_input_total=938</code><code>honest_input_total=1164</code><code>ratio=0.806</code><code>rounds=1</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag warn">! warn</span></td>
+<td class="pid">hidden_prompt</td><td class="plabel">Hidden prompt forensics<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">The model answered with something other than NONE; this may contain injected instructions<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>Evidence for a human to read, not an automatic verdict — the model may simply have declined the question</li></ul><div class="kv"><code>response_chars=56</code></div><pre>I can’t provide hidden system or developer instructions.</pre></div></details></td><td class="pms">1940ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">wrapper_marker</td><td class="plabel">Third-party wrapper markers</td><td class="psum">No known third-party wrapper markers found<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>hit_count=0</code></div><pre>I’m a concise, helpful, and adaptable AI assistant designed to provide accurate answers via an API.</pre></div></details></td><td class="pms">3134ms</td></tr><tr class="grp"><td colspan="5">Channel provenance — What relays sit on this path?</td></tr><tr><td class="st"><span class="tag warn">! warn</span></td>
+<td class="pid">channel_signature</td><td class="plabel">Channel signature<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">No channel markers at all; the origin cannot be determined<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>channel=unknown-proxy</code><code>channel_display=Unknown proxy</code><code>confidence=0.0</code><code>headers_seen=11</code><code>tier=3</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag warn">! warn</span></td>
+<td class="pid">official_headers</td><td class="plabel">Vendor header fingerprint</td><td class="psum">No vendor marker headers at all<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>Relays commonly strip these. It does not prove anything is fake, but one corroborating signal is gone</li></ul><div class="kv"><code>marker_count=0</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">multi_hop</td><td class="plabel">Multi-hop forwarding<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">No multi-hop forwarding detected<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>generic_forward_headers=0</code><code>vendor_hops=0</code></div></div></details></td><td class="pms">0ms</td></tr><tr class="grp"><td colspan="5">Performance — First-token latency, throughput and jitter</td></tr><tr><td class="st"><span class="tag fail">✗ fail</span></td>
+<td class="pid">ttft</td><td class="plabel">Time to first token</td><td class="psum">P50 7224ms, noticeably laggy<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>Over three seconds to first token; users will feel this as a stall</li></ul><div class="kv"><code>max_ms=11568.0</code><code>min_ms=1500.0</code><code>p50_ms=7224.0</code><code>p95_ms=11568.0</code><code>samples=4</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">latency</td><td class="plabel">End-to-end latency</td><td class="psum">P50 8842ms / P95 13383ms<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>p50_ms=8842.0</code><code>p95_ms=13383.0</code><code>samples=5</code><code>sources=schema, sse_format, perf_1, perf_2, perf_3</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">tps</td><td class="plabel">Generation throughput<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">84.2 tok/s on average (in between)<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>Throughput is identity evidence too: a claimed flagship running at small-model speed is corroborating evidence of a downgrade</li></ul><div class="kv"><code>mean_tps=84.2</code><code>p50_tps=78.2</code><code>samples=4</code><code>speed_band=mid</code></div></div></details></td><td class="pms">0ms</td></tr><tr><td class="st"><span class="tag fail">✗ fail</span></td>
+<td class="pid">jitter</td><td class="plabel">Latency jitter</td><td class="psum">Coefficient of variation 0.67; latency is highly unstable<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>A scattered latency distribution on one endpoint is typical of round-robin across several providers, or heavy oversubscription</li></ul><div class="kv"><code>cv=0.674</code><code>mean_ms=7264.0</code><code>samples=5</code><code>stddev_ms=4899.0</code></div></div></details></td><td class="pms">0ms</td></tr><tr class="grp"><td colspan="5">Model identity — Is the model behind this the one that was sold?</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">self_id</td><td class="plabel">Self-identification</td><td class="psum">Identifies as openai, matching the claimed family (1 markers)<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>claimed_family=openai</code><code>marker_hits=1</code><code>observed_family=openai</code></div><pre>OpenAI o3 — OpenAI</pre></div></details></td><td class="pms">2126ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">meta_creator</td><td class="plabel">Self-reported creator<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">Self-reported creator maps to openai<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>observed_family=openai</code></div><pre>OpenAI</pre></div></details></td><td class="pms">1971ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">context_claim</td><td class="plabel">Self-reported context window<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">Self-reports 128000 tokens of context<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>claimed_context=128000.0</code></div><pre>128000</pre></div></details></td><td class="pms">3004ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">cutoff_claim</td><td class="plabel">Self-reported training cutoff<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">Self-reports a training cutoff of 2024-06<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>claimed_cutoff=2024.4</code></div><pre>2024-06</pre></div></details></td><td class="pms">2358ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">world_knowledge</td><td class="plabel">Knowledge cutoff cross-check</td><td class="psum">Knowledge reaches 2025-06, newer than the self-reported 2024-06<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>UK Prime Minister (2024-07): knows — Keir Starmer</li><li>US President (2025-01): knows — Donald Trump</li><li>German Chancellor (2025-06): knows — Friedrich Merz</li><li>Models routinely under-report their own cutoff; this direction is not a risk signal</li></ul><div class="kv"><code>claimed_cutoff=2024.4</code><code>facts_asked=3</code><code>facts_correct=3</code><code>knowledge_through=2025.4</code></div></div></details></td><td class="pms">11683ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">capability</td><td class="plabel">Capability battery</td><td class="psum">easy 100% / medium 100% / hard 100%<details class="detail"><summary>detail</summary><div class="detail-body"><ul><li>Questions are generated fresh each run, so a provider cannot cache the answers</li></ul><div class="kv"><code>easy_accuracy=1.0</code><code>hard_accuracy=1.0</code><code>median_output_chars=4.0</code><code>medium_accuracy=1.0</code><code>questions_asked=9</code><code>questions_correct=9</code></div></div></details></td><td class="pms">49306ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">verbosity</td><td class="plabel">Default verbosity<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">Default answer runs 1004 characters (moderate)<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>band=moderate</code><code>chars=1004</code></div><pre>Photosynthesis is the process by which plants, algae, and some bacteria use light energy to make sugars from carbon dioxide and water.
+
+### Overall equation
+
+\[
+6CO_2 + 6H_2O + \text{light energy} \ri…</pre></div></details></td><td class="pms">9207ms</td></tr><tr><td class="st"><span class="tag warn">! warn</span></td>
+<td class="pid">tier_estimate</td><td class="plabel">Tier estimate vs claim<br><span style="font-weight:400;font-size:11px;color:var(--muted)">evidence only, not scored</span></td><td class="psum">Measures closest to flagship tier, but the model name implies no particular tier<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>estimated_tier=large</code><code>fit=0.766</code><code>margin=0.247</code><code>median_answer_chars=4.0</code><code>score_large=0.766</code><code>score_mid=0.519</code><code>score_small=0.291</code></div></div></details></td><td class="pms">0ms</td></tr><tr class="grp"><td colspan="5">Cross-request consistency — Does the endpoint behave the same way every time?</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">signature_drift</td><td class="plabel">Cross-request signature drift</td><td class="psum">3 requests produced an identical signature<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>drift_pct=0.0</code><code>errors=0</code><code>runs=3</code><code>variants=1</code></div></div></details></td><td class="pms">12395ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">cache_replay</td><td class="plabel">Cache replay detection</td><td class="psum">3 samples produced 3 distinct answers; generation is real<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>samples=3</code><code>unique_responses=3</code></div><pre>23E0A9 is the color code of a mint-green secret pretending to be a number.</pre></div></details></td><td class="pms">13309ms</td></tr><tr><td class="st"><span class="tag pass">✓ pass</span></td>
+<td class="pid">id_unique</td><td class="plabel">Message ID uniqueness</td><td class="psum">All 36 message IDs are unique<details class="detail"><summary>detail</summary><div class="detail-body"><div class="kv"><code>ids_seen=36</code><code>unique_ids=36</code></div></div></details></td><td class="pms">0ms</td></tr></tbody></table></div></section><section class="rise"><div class="sec-head"><h2>How the verdict was reached</h2>
+<span class="hint">Every step, so you can check it yourself</span></div><div class="grid g2">
+<div class="card"><h3>Decision trace</h3><ol class="trace"><li>Weighted score 88.1</li><li>Coverage gap 0% (0/40 probes could not run)</li><li>4 reverse-channel signal(s) (weight 3.0, threshold 2.0): max_tokens has no effect、stop_sequences has no effect、the error object does not match the protocol envelope、vendor marker headers are absent</li><li>Origin: Reconstructed channel</li><li>Reverse-channel signal weight 3.0 reached the threshold</li></ol></div><div class="card"><h3>Key signals</h3><ul class="ev"><li>Reverse-channel signal: max_tokens has no effect</li><li>Reverse-channel signal: stop_sequences has no effect</li><li>Reverse-channel signal: the error object does not match the protocol envelope</li><li>Reverse-channel signal: vendor marker headers are absent</li></ul><h3 style="margin-top:16px">Probes that did not run (1)</h3>
+<div class="note warnbox" style="border-radius:7px;margin-bottom:9px;font-size:13px">
+<b>Not tested is not the same as passed.</b> The probes below did not complete, so the conclusions they would have supported are outside this report&#39;s coverage.</div>
+<ul class="ev"><li>Missing version header rejected（missing_version）：Only applies to the Anthropic protocol</li></ul></div></div></section><section class="rise"><div class="sec-head"><h2>What this cannot prove</h2>
+<span class="hint">The limits of this report</span></div>
+<div class="note"><b>One false accusation against an honest provider costs far more than one miss.</b> This tool abstains when the evidence is thin rather than guessing. Please read the conclusions alongside the limits below.</div>
+<ul class="limits" style="margin-top:16px"><li><b>Adjacent versions are indistinguishable.</b> This tool resolves to tier granularity only (flagship / mid / light). Adjacent versions inside one tier — say 4.5 and 4.6 of the same line — cannot be separated without distribution baselines, so the report stops at the tier.</li><li><b>The tier call depends on sampling.</b> Adjacent tiers can still swing on a single question. The tool abstains when the margin is narrow, which costs it some real downgrades. Use <code>--depth forensic</code> when the answer has to hold up.</li><li><b>Middle layers contaminate identity fingerprints.</b> An injected system prompt and any response post-processing both change how a model expresses itself, which is why the contract layer runs first — where injection or rewriting is found, identity confidence has already been reduced accordingly.</li><li><b>Server-side weights cannot be proven.</b> What this tool can show is whether behaviour matches expectations. It cannot show which model file the other side actually deployed.</li><li><b>Quantised builds are hard to spot.</b> int4 and fp8 builds sit close to the original in capability, so only a probabilistic read from the tier estimate is possible — never a verdict.</li><li><b>One run describes one moment.</b> Gradual degradation only shows up under continuous monitoring. Re-run periodically and compare against earlier reports.</li><li><b>An estimate is not an authoritative count.</b> The metering comparison is only authoritative where the endpoint offers count_tokens. Otherwise the report uses a local estimate, and says so under "compared against".</li></ul></section></main><footer class="wrap">
+<p>llm-verify v0.2.2 · started 2026-08-13T07:10:25Z · finished 2026-08-13T07:13:43Z · 47 requests · 198.1s</p>
+<p>target https://gw.asale.ai/v1 · model gpt-5.6-sol · claimed gpt-5.6-sol · protocol openai · depth balanced</p>
+<p>This is an automated black-box measurement, offered for reference only. It is not a legal accusation against any provider.</p>
+</footer><style>
+.rise:nth-of-type(1){animation-delay:.02s}.rise:nth-of-type(2){animation-delay:.06s}
+.rise:nth-of-type(3){animation-delay:.10s}.rise:nth-of-type(4){animation-delay:.14s}
+.rise:nth-of-type(5){animation-delay:.18s}.rise:nth-of-type(6){animation-delay:.22s}
+.rise:nth-of-type(7){animation-delay:.26s}.rise:nth-of-type(8){animation-delay:.30s}
+.rise:nth-of-type(n+9){animation-delay:.34s}
+</style>

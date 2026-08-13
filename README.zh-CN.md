@@ -37,6 +37,27 @@ LLM_VERIFY_MODEL=claude-opus-4-5
 llm-verify
 ```
 
+### 运行示例
+
+用默认的 `balanced` 深度经 OpenRouter 检测 `gpt-5.6-sol`——40 项探针，47 次请求，耗时 133.8s：
+
+![探针执行过程](docs/ScreenShot_1.png)
+
+跑完的汇总里有判定、两条轴和分组得分：
+
+![判定汇总](docs/ScreenShot_2.png)
+
+`Relayed` / `Relay`：模型是真的，中间过了一跳。拉低分数的是渠道溯源和性能，身份和计费都没问题。
+
+同一个模型两次检测的完整 HTML 报告：
+
+| 报告 | 真伪 | 来源 | 评分 |
+|---|---|---|---|
+| [openrouter.ai](docs/llm-verify-openrouter-ai-20260813-072401.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-openrouter-ai-20260813-072401.html)） | 第三方转发 | 普通中转 | 92 / 100 |
+| [gw.asale.ai](docs/llm-verify-gw-asale-ai-20260813-071343.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-gw-asale-ai-20260813-071343.html)） | 存疑 | 逆向渠道 | 88 / 100 |
+
+后者 88 分并不低，仍然被判为「存疑」——多项异常同时出现，压过了加权分。评分和判定是两码事。
+
 ### 常用参数
 
 | 参数 | 说明 |
