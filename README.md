@@ -8,6 +8,14 @@ A single binary with no runtime dependencies. Results come out as an HTML report
 
 ## Install
 
+From crates.io, with a Rust toolchain (1.82+):
+
+```bash
+cargo install llm-verify
+```
+
+Without a toolchain, the install script fetches a prebuilt binary:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.sh | sh
 ```
@@ -95,25 +103,25 @@ silent fallback · shared-pool forwarding · tier downgrade · third-party wrapp
 
 ## Use it from an AI coding tool
 
-The skill is published on [ClawHub](https://clawhub.ai):
+The skill lives in this repository at [`skills/llm-verify/SKILL.md`](skills/llm-verify/SKILL.md). Install it with [`skills`](https://skills.sh), which supports Claude Code, Codex, Cursor, OpenCode and 70-odd other agents:
+
+```bash
+npx skills add asale-ai/llm-verify
+```
+
+```bash
+npx skills add asale-ai/llm-verify -g              # user-level, every project
+npx skills add asale-ai/llm-verify -a claude-code  # one agent only
+npx skills add asale-ai/llm-verify --list          # look before installing
+```
+
+It is also published on [ClawHub](https://clawhub.ai):
 
 ```bash
 clawhub install @asale-ai/llm-verify
 ```
 
-Or use the built-in installer, which writes to every tool it detects (Claude Code / Codex CLI / OpenCode / Gemini CLI):
-
-```bash
-llm-verify install-skill
-```
-
 Then just ask: *"is this API actually giving me what I paid for?"*
-
-```bash
-llm-verify skill-targets              # show install locations
-llm-verify install-skill -t claude    # one tool only
-llm-verify install-skill --project    # into the current repository
-```
 
 The skill is only the usage guide — the `llm-verify` binary does the work, so you need both.
 

@@ -8,6 +8,14 @@
 
 ## 安装
 
+有 Rust 工具链（1.82+）时，直接从 crates.io 装：
+
+```bash
+cargo install llm-verify
+```
+
+没有工具链就用安装脚本，它会下载预编译好的二进制：
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/asale-ai/llm-verify/main/install.sh | sh
 ```
@@ -95,25 +103,25 @@ llm-verify
 
 ## 在 AI 编程工具里用
 
-技能发布在 [ClawHub](https://clawhub.ai)：
+技能就在本仓库的 [`skills/llm-verify/SKILL.md`](skills/llm-verify/SKILL.md)，用 [`skills`](https://skills.sh) 安装即可，它支持 Claude Code、Codex、Cursor、OpenCode 等 70 多个 agent：
+
+```bash
+npx skills add asale-ai/llm-verify
+```
+
+```bash
+npx skills add asale-ai/llm-verify -g              # 装到用户级，所有项目可用
+npx skills add asale-ai/llm-verify -a claude-code  # 只装一个 agent
+npx skills add asale-ai/llm-verify --list          # 先看看有什么再装
+```
+
+也发布在 [ClawHub](https://clawhub.ai)：
 
 ```bash
 clawhub install @asale-ai/llm-verify
 ```
 
-或者用自带的安装器，一次写入所有已检测到的工具（Claude Code / Codex CLI / OpenCode / Gemini CLI）：
-
-```bash
-llm-verify install-skill
-```
-
 装好之后直接问「帮我看看这个 API 是不是真的」「这个中转站有没有多收钱」就会自动调用。
-
-```bash
-llm-verify skill-targets              # 看会装到哪些位置
-llm-verify install-skill -t claude    # 只装一个
-llm-verify install-skill --project    # 装到当前项目
-```
 
 技能本身只是使用说明，实际检测由 `llm-verify` 二进制执行，所以两者都需要。
 

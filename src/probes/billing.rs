@@ -625,7 +625,12 @@ async fn wrapper_marker(ctx: &Ctx) -> ProbeResult {
         ))
         .took(took)
     } else {
-        p.fail(t!(l, "Wrapper markers detected: {}", "检出壳标记：{}", uniq.join("、")))
+        p.fail(t!(
+            l,
+            "Wrapper markers detected: {}",
+            "检出壳标记：{}",
+            uniq.join(ts!(l, ", ", "、"))
+        ))
             .finding(t!(l, "The request passes through a third-party IDE or tool wrapper that rewrites your prompt and the response", "请求经过了第三方 IDE/工具的包装层，它会改写你的 prompt 与响应"))
             .took(took)
     }

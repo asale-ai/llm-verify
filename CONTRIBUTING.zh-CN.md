@@ -51,10 +51,14 @@ src/
   report.rs      所有探针写入、所有输出读取的数据模型
   html.rs        自包含 HTML 报告
   term.rs        终端输出
-  skill.rs       跨 AI 工具的技能安装
   pricing.rs     内置定价表
   util.rs        时间、PRNG、token 估算、格式化
+skills/
+  llm-verify/SKILL.md   技能正文，用 `npx skills add` 安装
 ```
+
+技能是仓库里的一个普通文件，不由二进制生成。要改就直接改
+`skills/llm-verify/SKILL.md`，`npx skills add asale-ai/llm-verify` 从仓库读取它。
 
 探针顺序执行、通过 `RefCell` 共享一个 `Ctx`。契约探针刻意排在最前：如果链路会重写请求，后面的指纹结论就不可靠，裁决层必须在读它们之前知道这件事。
 

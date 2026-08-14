@@ -150,7 +150,7 @@ pub async fn sse_format(ctx: &Ctx) -> ProbeResult {
             l,
             "Streaming unusable: {}",
             "流式响应不可用：{}",
-            problems.join("；")
+            problems.join(ts!(l, "; ", "；"))
         ))
         .took(took)
     } else {
@@ -158,7 +158,7 @@ pub async fn sse_format(ctx: &Ctx) -> ProbeResult {
             l,
             "Content arrived, but the format is wrong: {}",
             "内容拿到了，但格式有问题：{}",
-            problems.join("；")
+            problems.join(ts!(l, "; ", "；"))
         ))
         .took(took)
     }

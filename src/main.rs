@@ -10,7 +10,6 @@ mod pricing;
 mod probes;
 mod protocol;
 mod report;
-mod skill;
 mod term;
 mod util;
 mod verdict;
@@ -42,16 +41,9 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// The CLI parses one command per process, so the size gap between variants
-// costs a few hundred bytes once — boxing would only add an indirection.
-#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Verify an endpoint (the default command)
     Run(RunArgs),
-    /// Install the llm-verify skill into your AI coding tools
-    InstallSkill(skill::InstallArgs),
-    /// List where the skill would be installed for each tool
-    SkillTargets,
 }
 
 #[derive(clap::Args, Clone, Default)]
@@ -116,8 +108,6 @@ struct RunArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::InstallSkill(args)) => skill::install(&args, i18n::Lang::from_env(None)),
-        Some(Command::SkillTargets) => skill::list_targets(),
         Some(Command::Run(args)) => run_blocking(args),
         None => run_blocking(cli.run),
     }
@@ -260,10 +250,12 @@ async fn run(args: RunArgs) -> Result<i32> {
 
     let lang = lang_early;
     let depth = Depth::parse(&args.depth).ok_or_else(|| {
-        anyhow!(
+        anyhow!(t!(
+            lang,
+            "unrecognised depth {}; expected fast, balanced or forensic",
             "无法识别的深度 {}，可选：fast / balanced / forensic",
             args.depth
-        )
+        ))
     })?;
 
     let claimed_model = args.claimed_model.clone().unwrap_or_else(|| model.clone());
@@ -305,7 +297,16 @@ async fn run(args: RunArgs) -> Result<i32> {
     let skipped = results
         .iter()
         .filter(|r| matches!(r.status, report::Status::Skip | report::Status::Error))
-        .map(|r| format!("{}（{}）：{}", r.label, r.id, r.summary))
+        .map(|r| {
+            t!(
+                lang,
+                "{} ({}) — {}",
+                "{}（{}）：{}",
+                r.label,
+                r.id,
+                r.summary
+            )
+        })
         .collect();
 
     let rep = Report {

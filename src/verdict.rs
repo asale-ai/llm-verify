@@ -511,7 +511,8 @@ pub fn build_billing(results: &[ProbeResult], model: &str, l: Lang) -> BillingAu
     ] {
         if let Some(r) = find(results, id) {
             if matches!(r.status, Status::Fail | Status::Warn) {
-                b.anomalies.push(format!("{}：{}", r.label, r.summary));
+                b.anomalies
+                    .push(t!(l, "{} — {}", "{}：{}", r.label, r.summary));
             }
         }
     }
@@ -609,14 +610,14 @@ pub fn decide(
             g.name,
             g.reason
         ));
-        signals.push(format!("{}：{}", g.name, g.reason));
+        signals.push(t!(l, "{} — {}", "{}：{}", g.name, g.reason));
     }
 
     let (reverse, reverse_weight) = reverse_signals(results, protocol, l);
     if !reverse.is_empty() {
         trace.push(t!(l, "{} reverse-channel signal(s) (weight {reverse_weight:.1}, threshold {REVERSE_THRESHOLD:.1}): {}", "逆向信号 {} 项（加权 {reverse_weight:.1}，判定门槛 {REVERSE_THRESHOLD:.1}）：{}",
             reverse.len(),
-            reverse.join("、")
+            reverse.join(ts!(l, ", ", "、"))
         ));
     }
     let channel = classify_channel(results, channel_sig, reverse_weight);
@@ -726,7 +727,7 @@ pub fn decide(
     for id in ["model_echo", "input_inflation", "cache_replay", "multi_hop"] {
         if let Some(r) = find(results, id) {
             if r.status == Status::Fail {
-                signals.push(format!("{}：{}", r.label, r.summary));
+                signals.push(t!(l, "{} — {}", "{}：{}", r.label, r.summary));
             }
         }
     }

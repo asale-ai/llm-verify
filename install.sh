@@ -167,4 +167,4 @@ esac
 
 printf '\n  Get started:\n'
 printf '      %bllm-verify --base-url <URL> --api-key <KEY> --model <MODEL>%b\n' "$D" "$Z"
-printf '      %bllm-verify install-skill%b   # into Claude Code / Codex / OpenCode / Gemini CLI\n\n' "$D" "$Z"
+printf '      %bnpx skills add asale-ai/llm-verify%b   # the skill, for your AI coding tool\n\n' "$D" "$Z"

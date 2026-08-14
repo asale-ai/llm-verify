@@ -106,7 +106,6 @@ jobs:
           bin="target/${{ matrix.target }}/release/llm-verify${{ matrix.ext }}"
           "$bin" --version
           "$bin" --help > /dev/null
-          "$bin" skill-targets > /dev/null
           # A run with no endpoint must fail cleanly, not panic.
           if "$bin" --env-file /dev/null > /dev/null 2>&1; then
             echo "expected a non-zero exit when no endpoint is configured" >&2

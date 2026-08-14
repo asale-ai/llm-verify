@@ -361,8 +361,16 @@ mod coverage_tests {
         out
     }
 
+    /// Ideographs *and* CJK punctuation. The punctuation half matters: a
+    /// separator literal such as `"、"` or `"："` carries no ideograph, so a
+    /// bare `format!("{}：{}", ..)` used to slip past this check and print
+    /// full-width punctuation into English reports.
     fn has_cjk(s: &str) -> bool {
-        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+        s.chars().any(|c| {
+            ('\u{4e00}'..='\u{9fff}').contains(&c)      // ideographs
+                || ('\u{3000}'..='\u{303f}').contains(&c) // 、。〈〉《》 …
+                || ('\u{ff01}'..='\u{ff65}').contains(&c) // ：（）！？ …
+        })
     }
 
     /// Drop `#[cfg(test)]` modules — fixtures are allowed to be monolingual.
@@ -407,6 +415,29 @@ mod coverage_tests {
                     while i < b.len() && b[i] != b'\n' {
                         i += 1;
                     }
+                }
+                // A char literal, which may itself be a quote. `'"'` in
+                // `trim_matches('"')` once opened a phantom string that ran to
+                // the next quote hundreds of lines later, and every message in
+                // between went unchecked — that is how an untranslated error
+                // string survived in `main.rs`. Lifetimes (`'a`) are not char
+                // literals, so only advance when a closing quote is really there.
+                b'\'' => {
+                    let mut j = i + 1;
+                    if j < b.len() && b[j] == b'\\' {
+                        j += 2;
+                    } else {
+                        // One UTF-8 scalar, however many bytes it occupies.
+                        j += 1;
+                        while j < b.len() && (b[j] & 0xC0) == 0x80 {
+                            j += 1;
+                        }
+                    }
+                    i = if j < b.len() && b[j] == b'\'' {
+                        j + 1
+                    } else {
+                        i + 1
+                    };
                 }
                 b'"' => {
                     let start = i;

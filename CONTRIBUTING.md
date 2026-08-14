@@ -72,10 +72,15 @@ src/
   report.rs      the data model every probe writes into
   html.rs        self-contained HTML report
   term.rs        terminal output
-  skill.rs       skill installation across AI tools
   pricing.rs     built-in list prices
   util.rs        time, PRNG, token estimation, formatting
+skills/
+  llm-verify/SKILL.md   the agent skill, installed with `npx skills add`
 ```
+
+The skill is a plain checked-in file, not something the binary writes. Edit
+`skills/llm-verify/SKILL.md` directly; `npx skills add asale-ai/llm-verify`
+picks it up from the repository.
 
 Probes run sequentially and share a `Ctx` through `RefCell`. Contract probes run first on purpose: if the channel rewrites requests, later fingerprint results are unreliable and the verdict layer needs to know that before reading them.
 

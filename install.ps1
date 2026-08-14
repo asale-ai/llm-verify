@@ -183,5 +183,5 @@ if ($userPath -and ($userPath -split ';' | Where-Object { $_.TrimEnd('\') -ieq $
 Write-Host ""
 Write-Host "  Get started:"
 Write-Host "      llm-verify --base-url <URL> --api-key <KEY> --model <MODEL>" -ForegroundColor DarkGray
-Write-Host "      llm-verify install-skill   # into Claude Code / Codex / OpenCode / Gemini CLI" -ForegroundColor DarkGray
+Write-Host "      npx skills add asale-ai/llm-verify   # the skill, for your AI coding tool" -ForegroundColor DarkGray
 Write-Host ""
