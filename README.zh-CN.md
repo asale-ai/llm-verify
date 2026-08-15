@@ -47,7 +47,7 @@ llm-verify
 
 ### 运行示例
 
-用默认的 `balanced` 深度经 OpenRouter 检测 `gpt-5.6-sol`——40 项探针，47 次请求，耗时 133.8s：
+用默认的 `balanced` 深度经 OpenRouter 检测 `gpt-5.6-sol`——40 项探针，47 次请求，耗时 131.2s：
 
 ![探针执行过程](docs/ScreenShot_1.png)
 
@@ -61,10 +61,10 @@ llm-verify
 
 | 报告 | 真伪 | 来源 | 评分 |
 |---|---|---|---|
-| [openrouter.ai](docs/llm-verify-openrouter-ai-20260813-072401.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-openrouter-ai-20260813-072401.html)） | 第三方转发 | 普通中转 | 92 / 100 |
-| [gw.asale.ai](docs/llm-verify-gw-asale-ai-20260813-071343.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-gw-asale-ai-20260813-071343.html)） | 存疑 | 逆向渠道 | 88 / 100 |
+| [openrouter.ai](docs/llm-verify-openrouter-ai-20260815-125833.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-openrouter-ai-20260815-125833.html)） | 第三方转发 | 普通中转 | 92 / 100 |
+| [gw.asale.ai](docs/llm-verify-gw-asale-ai-20260815-130656.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-gw-asale-ai-20260815-130656.html)） | 第三方转发 | 无法确定 | 93 / 100 |
 
-后者 88 分并不低，仍然被判为「存疑」——多项异常同时出现，压过了加权分。评分和判定是两码事。
+同样的模型、同样的判定，分数只差两分，报告读起来却不一样：OpenRouter 在响应头里留了自己的标记，来源能落到具体的一跳；后一条路径没有任何渠道特征，来源只能是「无法确定」，而不是「干净」。来源和评分、判定是三条独立的读数。
 
 ### 常用参数
 
