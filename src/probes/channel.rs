@@ -66,9 +66,9 @@ const TIER1: &[(&str, &str, &str, &str)] = &[
 ];
 
 pub async fn run(ctx: &Ctx) -> Vec<ProbeResult> {
-    let headers = merge_headers(&ctx.headers.borrow());
-    let ids = ctx.message_ids.borrow().clone();
-    let bodies = ctx.raw_bodies.borrow().join("\n");
+    let headers = merge_headers(&ctx.headers.lock().unwrap());
+    let ids = ctx.message_ids.lock().unwrap().clone();
+    let bodies = ctx.raw_bodies.lock().unwrap().join("\n");
     vec![
         classify(&headers, &ids, &bodies, ctx.lang),
         official_headers(&headers, ctx.lang),

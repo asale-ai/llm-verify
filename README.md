@@ -139,6 +139,61 @@ The skill is only the usage guide — the `llm-verify` binary does the work, so 
 | Model identity | Is the model behind this the one that was sold? |
 | Cross-request consistency | Does the endpoint behave the same way every time? |
 
+## Use it as a library
+
+The binary is a thin CLI over the crate, so an embedder gets the same probes, the same order and the same verdict — which is what lets it claim its own results and the published tool agree.
+
+```toml
+[dependencies]
+llm-verify = { version = "0.4", default-features = false }
+```
+
+`default-features = false` drops the CLI half: clap, the terminal writer and the HTML renderer are dead weight in a service.
+
+```rust
+use llm_verify::{engine, probes::Cancel, Endpoint};
+
+let cfg = engine::RunConfig::new(Endpoint {
+    base_url: "https://api.anthropic.com".into(),
+    api_key: std::env::var("ANTHROPIC_API_KEY")?,
+    model: "claude-opus-4-5".into(),
+    ..Default::default()
+});
+let report = engine::run(cfg, &Cancel::new(), &mut |_| {}).await?;
+println!("{:?} {}", report.verdict.authenticity, report.verdict.score);
+```
+
+### Probing through a relay
+
+Half the suite asks about *the endpoint* — its error envelopes, its response headers, the token counts it reports. Behind a relay those describe the relay, not the model, and several of them deliberately send malformed or unauthenticated requests, which is not traffic you want attributed to somebody else's account.
+
+`Selection::model_only()` keeps only the steps whose evidence is the generated text itself, which survives any number of hops:
+
+```rust
+let cfg = engine::RunConfig::new(endpoint)
+    .model_only()
+    .depth(llm_verify::Depth::Fast)
+    // Chosen by the caller and recorded in the report, so a contested verdict
+    // can be replayed probe for probe.
+    .seed(0x5EED)
+    // Spread the run out instead of issuing it as one recognisable burst.
+    .pace(Duration::from_secs(20), Duration::from_secs(180));
+```
+
+### Progress, cancellation, and your own probes
+
+`engine::run` reports each step as it starts and finishes, and takes a `Cancel` that is honoured between steps. `Selection::with` appends your own [`Probe`] implementations, which share the run's client, seed and observation buffers — so a private probe is indistinguishable from a built-in one both in the report and on the wire. That matters if you are policing a marketplace: everything in this repository is readable by the endpoint you are probing.
+
+### What it costs
+
+Measured, not estimated — `tests/request_budget.rs` pins these so that adding a probe cannot quietly multiply anyone's bill:
+
+| Selection | Depth | Requests |
+|---|---|---|
+| `model_only` | `fast` | 21 |
+| `model_only` | `forensic` | 46 |
+| everything | `balanced` | 49 |
+
 ## Limits
 
 One false accusation against an honest provider costs far more than one miss. This tool abstains when the evidence is thin rather than guessing. Please know the following:
@@ -149,6 +204,7 @@ One false accusation against an honest provider costs far more than one miss. Th
 - **Middle layers contaminate identity fingerprints**, which is why the contract layer runs first; where injection is found, identity confidence is reduced automatically.
 - **Server-side weights cannot be proven** — only whether behaviour matches expectations.
 - **One run describes one moment.** Gradual degradation needs periodic re-runs and comparison.
+- **The probes are public.** That is the point of an auditable tool, and it is a ceiling: an endpoint can read this repository too, and answer these questions honestly while serving everything else from somewhere cheaper. Timing can be disguised (`RunConfig::pace`); the questions cannot be. Anyone using this to police supply they do not control needs probes of their own on top — see `Selection::with` — and should treat the result as a probability rather than a proof.
 
 ## Licence
 

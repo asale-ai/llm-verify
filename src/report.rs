@@ -3,11 +3,11 @@
 
 use crate::i18n::Lang;
 use crate::protocol::Protocol;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     Pass,
@@ -64,7 +64,7 @@ impl Status {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Group {
     Contract,
@@ -152,7 +152,7 @@ impl Group {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProbeResult {
     pub id: String,
     pub label: String,
@@ -264,7 +264,7 @@ impl ProbeResult {
 // ── verdict ────────────────────────────────────────────────────────────────
 
 /// Axis 1 — is the response genuine?
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Authenticity {
     Authentic,
@@ -272,6 +272,9 @@ pub enum Authenticity {
     ThirdParty,
     Suspicious,
     Counterfeit,
+    /// The default: a verdict nobody has reached yet is "we do not know", never
+    /// "clean".
+    #[default]
     Inconclusive,
 }
 
@@ -339,7 +342,7 @@ impl Authenticity {
 
 /// Axis 2 — where did it come from? Independent of axis 1: a real model
 /// behind a relay is still a real model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Channel {
     Official,
@@ -347,6 +350,7 @@ pub enum Channel {
     Subscription,
     Proxy,
     ReverseProxy,
+    #[default]
     Unknown,
 }
 
@@ -401,7 +405,7 @@ impl Channel {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Verdict {
     pub authenticity: Authenticity,
     pub channel: Channel,
@@ -418,7 +422,7 @@ pub struct Verdict {
     pub coverage_gap: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GateHit {
     pub name: String,
     pub probe: String,
@@ -427,7 +431,7 @@ pub struct GateHit {
 
 // ── identity ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityStatus {
     /// Family and tier both line up with the claim.
@@ -475,7 +479,7 @@ impl IdentityStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Identity {
     pub claimed_model: String,
     pub claimed_family: Option<String>,
@@ -500,7 +504,7 @@ pub struct Identity {
 
 // ── billing ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BillingAudit {
     pub rounds: Vec<BillingRound>,
     /// `authoritative` when the endpoint's own count_tokens answered,
@@ -518,7 +522,7 @@ pub struct BillingAudit {
     pub anomalies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingRound {
     pub probe: String,
     pub billed_input: u32,
@@ -529,7 +533,7 @@ pub struct BillingRound {
 
 // ── channel ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelSignature {
     /// Stable classifier key. The verdict layer routes on this.
     pub key: String,
@@ -545,7 +549,7 @@ pub struct ChannelSignature {
 
 // ── perf ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerfSummary {
     pub samples: usize,
     pub ttft_ms: Vec<f64>,
@@ -561,8 +565,16 @@ pub struct PerfSummary {
 
 // ── whole run ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
+    /// Shape of this JSON, independent of [`Report::tool_version`].
+    ///
+    /// A caller that stores reports needs to know whether an old row can still
+    /// be deserialised, and the tool version cannot answer that: most releases
+    /// change no field at all. Bumped only when a field is removed or its
+    /// meaning changes; additive fields do not move it.
+    #[serde(default = "schema_version")]
+    pub schema_version: u32,
     pub tool_version: String,
     /// Language every human-readable string in this report is written in.
     pub lang: Lang,
@@ -575,6 +587,22 @@ pub struct Report {
     pub model: String,
     pub claimed_model: String,
     pub depth: String,
+    /// The random seed this run's payloads were generated from. Replaying the
+    /// same seed, depth and step list reproduces the same probes — which is
+    /// what makes a verdict auditable after the fact.
+    ///
+    /// Serialised as a **string**, and that is not cosmetic. A `u64` seed
+    /// routinely exceeds 2^53, and JSON numbers above that lose precision in
+    /// every JavaScript consumer — a report rendered in a browser showed
+    /// `2543944364647182727` as `25439443646471830000`, next to a sentence
+    /// promising the run could be replayed from it. A seed that cannot be
+    /// copied accurately is worse than no seed, because it looks like evidence.
+    #[serde(default, with = "seed_repr")]
+    pub seed: u64,
+    /// Registry ids of the steps that ran, in order. A report that covers part
+    /// of the suite must say which part: absent evidence is not evidence.
+    #[serde(default)]
+    pub steps: Vec<String>,
     pub request_count: u32,
     pub results: Vec<ProbeResult>,
     pub verdict: Verdict,
@@ -584,6 +612,36 @@ pub struct Report {
     pub perf: PerfSummary,
     /// Probes that never ran, and why — so "not tested" is never read as "passed".
     pub skipped: Vec<String>,
+}
+
+/// A `u64` that survives a JSON round trip through a JavaScript consumer.
+///
+/// Writes a string; reads either, so reports written before the change still
+/// load.
+mod seed_repr {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &u64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Either {
+            S(String),
+            N(u64),
+        }
+        Ok(match Either::deserialize(d)? {
+            Either::S(s) => s.parse().unwrap_or(0),
+            Either::N(n) => n,
+        })
+    }
+}
+
+/// Current [`Report::schema_version`].
+pub const fn schema_version() -> u32 {
+    1
 }
 
 impl Report {
@@ -614,6 +672,48 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caller that stores a verdict has to be able to read it back — for an
+    /// evidence view, for an appeal, for a rescore after the policy changes.
+    /// A report that only serialises is half a feature, and the half that is
+    /// missing is the one an accused seller needs.
+    #[test]
+    fn a_report_survives_a_round_trip_through_json() {
+        let before = report_with(Authenticity::Suspicious, 61.5, vec![]);
+        let json = serde_json::to_string(&before).unwrap();
+        let after: Report = serde_json::from_str(&json).unwrap();
+        assert_eq!(after.schema_version, before.schema_version);
+        assert_eq!(after.verdict.authenticity, before.verdict.authenticity);
+        assert_eq!(after.verdict.score, before.verdict.score);
+        assert_eq!(after.seed, before.seed);
+        assert_eq!(after.steps, before.steps);
+    }
+
+    /// An unknown verdict must never deserialise as a clean one.
+    /// A seed that a browser cannot read back accurately is not evidence.
+    #[test]
+    fn a_large_seed_survives_a_json_round_trip() {
+        let mut before = report_with(Authenticity::ThirdParty, 90.0, vec![]);
+        // Bigger than 2^53, which is where a JavaScript `number` starts lying.
+        before.seed = 2_543_944_364_647_182_727;
+        let json = serde_json::to_string(&before).unwrap();
+        assert!(
+            json.contains("\"seed\":\"2543944364647182727\""),
+            "the seed must go out as a string: {json}"
+        );
+        let after: Report = serde_json::from_str(&json).unwrap();
+        assert_eq!(after.seed, before.seed);
+
+        // And a report written before the change still loads.
+        let legacy = json.replace("\"seed\":\"2543944364647182727\"", "\"seed\":123");
+        assert_eq!(serde_json::from_str::<Report>(&legacy).unwrap().seed, 123);
+    }
+
+    #[test]
+    fn the_default_verdict_is_inconclusive_not_authentic() {
+        assert_eq!(Authenticity::default(), Authenticity::Inconclusive);
+        assert_eq!(Channel::default(), Channel::Unknown);
+    }
 
     #[test]
     fn status_credit_matches_scoring_rules() {
@@ -653,6 +753,7 @@ mod tests {
 
     fn report_with(auth: Authenticity, score: f64, gates: Vec<GateHit>) -> Report {
         Report {
+            schema_version: schema_version(),
             tool_version: "t".into(),
             lang: Lang::En,
             started_at: String::new(),
@@ -664,6 +765,8 @@ mod tests {
             model: String::new(),
             claimed_model: String::new(),
             depth: "balanced".into(),
+            seed: 0,
+            steps: vec![],
             request_count: 0,
             results: vec![],
             verdict: Verdict {

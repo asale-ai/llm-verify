@@ -23,6 +23,28 @@ pub struct Endpoint {
     pub model: String,
     pub anthropic_version: String,
     pub timeout: Duration,
+    /// Sent on every request, ahead of any per-probe `extra_headers`.
+    ///
+    /// The CLI leaves this empty. An embedder uses it for whatever its own
+    /// front door requires — routing headers, a tenant id, a marker that says
+    /// which of its callers this run belongs to. It is deliberately *not*
+    /// merged into `auth_headers`' omit logic: a probe that removes the API key
+    /// to see how the endpoint answers must still be routed to it.
+    pub headers: Vec<(String, String)>,
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        Endpoint {
+            base_url: String::new(),
+            api_key: String::new(),
+            protocol: Protocol::OpenAI,
+            model: String::new(),
+            anthropic_version: "2023-06-01".to_string(),
+            timeout: Duration::from_secs(120),
+            headers: Vec::new(),
+        }
+    }
 }
 
 impl Endpoint {
@@ -138,7 +160,12 @@ pub struct Client {
     http: reqwest::Client,
     pub endpoint: Endpoint,
     /// Every request the run has made, for the report's request ledger.
-    pub request_count: std::cell::Cell<u32>,
+    ///
+    /// Atomic rather than `Cell` so a probe future stays `Send`. Probes run
+    /// sequentially and nothing here is contended; what the atomic buys is the
+    /// ability to `await` this engine from a multi-threaded runtime — an
+    /// embedder's request handler cannot hold a `!Send` future.
+    pub request_count: std::sync::atomic::AtomicU32,
 }
 
 impl Client {
@@ -152,15 +179,43 @@ impl Client {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("failed to build HTTP client")?;
-        Ok(Self {
+        Ok(Self::with_http(endpoint, http))
+    }
+
+    /// Build on a caller-supplied HTTP client.
+    ///
+    /// An embedder generally already has one, configured for its own network:
+    /// a proxy it must egress through, a connection pool it wants shared, a
+    /// root store it pins. Rebuilding that here would either duplicate the
+    /// configuration or quietly ignore it.
+    ///
+    /// The caller owns the timeout and the redirect policy that come with the
+    /// client it passes. Both matter to what the probes mean — a client that
+    /// follows redirects can be bounced to a different host mid-run without
+    /// the report saying so — so a caller that has no strong opinion should
+    /// use [`Client::new`].
+    pub fn with_http(endpoint: Endpoint, http: reqwest::Client) -> Self {
+        Self {
             http,
             endpoint,
-            request_count: std::cell::Cell::new(0),
-        })
+            request_count: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// Requests issued so far.
+    pub fn requests(&self) -> u32 {
+        self.request_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn count_request(&self) {
+        self.request_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn auth_headers(&self, opts: &RequestOpts) -> Vec<(String, String)> {
         let mut h = vec![("content-type".to_string(), "application/json".to_string())];
+        h.extend(self.endpoint.headers.iter().cloned());
         if !opts.omit_auth {
             match self.endpoint.protocol {
                 Protocol::Anthropic => {
@@ -196,7 +251,7 @@ impl Client {
         body: &Value,
         opts: &RequestOpts,
     ) -> Result<RawResponse> {
-        self.request_count.set(self.request_count.get() + 1);
+        self.count_request();
         let url = self.endpoint.url(path);
         let payload = match &opts.raw_body {
             Some(b) => b.clone(),
@@ -225,7 +280,7 @@ impl Client {
     }
 
     pub async fn get_raw(&self, path: &str, opts: &RequestOpts) -> Result<RawResponse> {
-        self.request_count.set(self.request_count.get() + 1);
+        self.count_request();
         let url = self.endpoint.url(path);
         let mut req = self.http.get(&url);
         for (k, v) in self.auth_headers(opts) {
@@ -281,7 +336,7 @@ impl Client {
 
     /// Stream a chat request, timing the first content-bearing event.
     pub async fn stream(&self, req: &ChatRequest) -> Result<StreamResult> {
-        self.request_count.set(self.request_count.get() + 1);
+        self.count_request();
         let proto = self.endpoint.protocol;
         let body = req.clone().stream(true).to_body(proto);
         let url = self.endpoint.url(proto.chat_path());
@@ -539,6 +594,7 @@ mod tests {
             model: "m".into(),
             anthropic_version: "2023-06-01".into(),
             timeout: Duration::from_secs(1),
+            headers: Vec::new(),
         }
     }
 

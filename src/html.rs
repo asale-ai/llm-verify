@@ -1743,6 +1743,7 @@ mod tests {
         ];
 
         Report {
+            schema_version: schema_version(),
             tool_version: "0.2.2".into(),
             lang,
             started_at: "2026-08-13 07:24:01".into(),
@@ -1754,6 +1755,8 @@ mod tests {
             model: "gpt-5.6-sol".into(),
             claimed_model: "gpt-5.6-sol".into(),
             depth: "balanced".into(),
+            seed: 0,
+            steps: vec![],
             request_count: 47,
             results,
             verdict: Verdict {

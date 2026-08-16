@@ -126,7 +126,7 @@ pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
 
     // Temperature 1 with an open-ended prompt: identical text across runs is
     // not something a model does, but a cache does it every time.
-    let nonce = ctx.rng.borrow_mut().hex(6);
+    let nonce = ctx.rng.lock().unwrap().hex(6);
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         &format!(
@@ -197,7 +197,7 @@ pub async fn request_id_unique(ctx: &Ctx) -> ProbeResult {
         G,
     )
     .weight(1);
-    let ids = ctx.message_ids.borrow().clone();
+    let ids = ctx.message_ids.lock().unwrap().clone();
     let non_empty: Vec<&String> = ids.iter().filter(|i| !i.is_empty()).collect();
 
     if non_empty.len() < 2 {

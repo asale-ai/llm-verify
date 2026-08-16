@@ -70,9 +70,14 @@ impl Rng {
         Self(if seed == 0 { 0xDEAD_BEEF } else { seed })
     }
 
-    /// Deterministic construction. Only tests need reproducible sequences;
-    /// a real run must vary so providers cannot pre-cache probe payloads.
-    #[cfg(test)]
+    /// Deterministic construction.
+    ///
+    /// A run must be unpredictable *to the endpoint being probed* — a provider
+    /// that can guess the payloads can pre-cache the answers — but that is a
+    /// property of who chooses the seed, not of whether one exists. The CLI
+    /// leaves it to [`Rng::new`]; an embedder that probes on someone else's
+    /// behalf picks the seed itself, keeps it, and can then replay the exact
+    /// run when a verdict is challenged. Tests use it for the obvious reason.
     pub fn from_seed(seed: u64) -> Self {
         Self(if seed == 0 { 0xDEAD_BEEF } else { seed })
     }

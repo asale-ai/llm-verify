@@ -1,6 +1,6 @@
 [package]
 name = "llm-verify"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Black-box authenticity, billing and performance verification for LLM API endpoints"
@@ -13,13 +13,27 @@ keywords = ["llm", "api", "verification", "fingerprint", "audit"]
 categories = ["command-line-utilities"]
 exclude = ["samples/", "docs/", ".github/", "*.html"]
 
+[lib]
+name = "llm_verify"
+path = "src/lib.rs"
+
 [[bin]]
 name = "llm-verify"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+# `cargo install llm-verify` and `cargo build` both want the binary, so the CLI
+# is on by default. An embedder takes the engine alone with
+# `default-features = false`, which drops clap, the HTML renderer and the
+# terminal writer — none of which a server has any use for.
+default = ["cli"]
+cli = ["html", "dep:clap"]
+html = []
 
 [dependencies]
 # CLI. default-features off drops the colour/suggestion machinery we do not need.
-clap = { version = "4", default-features = false, features = [
+clap = { version = "4", optional = true, default-features = false, features = [
     "std",
     "derive",
     "help",

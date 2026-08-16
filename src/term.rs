@@ -5,11 +5,12 @@
 //! Column widths are derived from the language rather than hard-coded, because
 //! the same row is roughly twice as wide in English as in Chinese.
 
-use crate::client::Endpoint;
-use crate::i18n::Lang;
-use crate::probes::Depth;
-use crate::report::{Group, ProbeResult, Report, Status};
-use crate::util::pad_display;
+use llm_verify::client::Endpoint;
+use llm_verify::i18n::Lang;
+use llm_verify::probes::Depth;
+use llm_verify::report::{Group, ProbeResult, Report, Status};
+use llm_verify::util::pad_display;
+use llm_verify::{t, ts};
 
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
@@ -82,7 +83,7 @@ pub fn banner(ep: &Endpoint, depth: Depth, claimed: &str, lang: Lang, colour: bo
 pub fn progress_line(r: &ProbeResult, i: usize, total: usize, lang: Lang, colour: bool) {
     let sym = paint(r.status.symbol(), status_colour(r.status), colour);
     let idx = paint(&format!("[{i:>2}/{total}]"), DIM, colour);
-    let summary = crate::util::truncate(&r.summary, if lang == Lang::En { 52 } else { 44 });
+    let summary = llm_verify::util::truncate(&r.summary, if lang == Lang::En { 52 } else { 44 });
     println!(
         "  {idx} {sym} {} {}",
         pad_display(&r.label, label_width(lang)),
@@ -96,12 +97,12 @@ pub fn summary(rep: &Report, colour: bool) {
     println!("{}", paint(&"─".repeat(72), DIM, colour));
 
     let verdict_colour = match v.authenticity {
-        crate::report::Authenticity::Authentic => GREEN,
-        crate::report::Authenticity::AuthenticDegraded
-        | crate::report::Authenticity::ThirdParty => BLUE,
-        crate::report::Authenticity::Suspicious => YELLOW,
-        crate::report::Authenticity::Counterfeit => RED,
-        crate::report::Authenticity::Inconclusive => GREY,
+        llm_verify::report::Authenticity::Authentic => GREEN,
+        llm_verify::report::Authenticity::AuthenticDegraded
+        | llm_verify::report::Authenticity::ThirdParty => BLUE,
+        llm_verify::report::Authenticity::Suspicious => YELLOW,
+        llm_verify::report::Authenticity::Counterfeit => RED,
+        llm_verify::report::Authenticity::Inconclusive => GREY,
     };
 
     let key = |k: &str| pad_display(k, key_width(l));

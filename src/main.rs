@@ -1,25 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //! llm-verify — black-box verification for LLM API endpoints.
+//!
+//! A CLI over the [`llm_verify`] crate. Argument parsing, the terminal display
+//! and the report files live here; everything that decides anything lives in
+//! the library, so this binary and an embedded caller cannot drift apart.
 
-#[macro_use]
-mod i18n;
-
-mod client;
-mod html;
-mod pricing;
-mod probes;
-mod protocol;
-mod report;
 mod term;
-mod util;
-mod verdict;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use client::{Client, Endpoint};
-use probes::{Ctx, Depth};
-use protocol::Protocol;
-use report::Report;
+use llm_verify::client::Endpoint;
+use llm_verify::i18n;
+use llm_verify::probes::{Cancel, Depth, Event, Selection};
+use llm_verify::protocol::Protocol;
+use llm_verify::report::Report;
+use llm_verify::{engine, html, t, ts, util};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -75,6 +70,29 @@ struct RunArgs {
     /// Probe depth: fast / balanced / forensic
     #[arg(long, default_value = "balanced")]
     depth: String,
+
+    /// Run only the probes whose evidence is the generated text.
+    ///
+    /// Use when the endpoint is a relay you already know about and what you
+    /// want to know is what is behind it: the contract, header and metering
+    /// probes would all be describing the relay.
+    #[arg(long)]
+    model_only: bool,
+
+    /// Comma-separated probe ids to run; everything else is skipped
+    #[arg(long, value_delimiter = ',')]
+    only: Vec<String>,
+
+    /// Comma-separated probe ids to skip
+    #[arg(long, value_delimiter = ',')]
+    skip: Vec<String>,
+
+    /// Seed the probe payloads, so the run can be reproduced exactly.
+    ///
+    /// Leave unset for real use: an endpoint that can predict the payloads can
+    /// pre-cache the answers.
+    #[arg(long)]
+    seed: Option<u64>,
 
     /// HTML report path. Pass a directory to auto-name the file
     #[arg(long, short = 'o')]
@@ -268,68 +286,46 @@ async fn run(args: RunArgs) -> Result<i32> {
         anthropic_version: pick(&env_pairs, &["ANTHROPIC_VERSION"])
             .unwrap_or_else(|| "2023-06-01".to_string()),
         timeout: Duration::from_secs(args.timeout),
+        headers: Vec::new(),
     };
 
     let use_color = !args.no_color && std::env::var("NO_COLOR").is_err();
-    let started_at = util::iso8601_utc();
-    let t0 = util::now_ms();
 
     if !args.quiet {
         term::banner(&endpoint, depth, &claimed_model, lang, use_color);
     }
 
-    let client = Client::new(endpoint.clone())?;
-    let ctx = Ctx::new(client, depth, lang, claimed_model.clone());
-
-    let mut on_progress = |r: &report::ProbeResult, i: usize, total: usize| {
-        if !args.quiet {
-            term::progress_line(r, i, total, lang, use_color);
+    let selection = if args.model_only {
+        Selection::model_only()
+    } else {
+        Selection {
+            only: args.only.clone(),
+            skip: args.skip.clone(),
+            ..Default::default()
         }
     };
-    let results = probes::run_all(&ctx, &mut on_progress).await;
 
-    let identity = verdict::build_identity(&results, &claimed_model, lang);
-    let billing = verdict::build_billing(&results, &model, lang);
-    let channel = verdict::build_channel(&results, lang);
-    let v = verdict::decide(&results, &identity, &billing, &channel, protocol, lang);
-    let perf = probes::perf::summarize(&ctx.perf.borrow());
+    let mut cfg = engine::RunConfig::new(endpoint)
+        .depth(depth)
+        .lang(lang)
+        .claimed_model(claimed_model.clone());
+    cfg.selection = selection;
+    cfg.seed = args.seed;
 
-    let skipped = results
-        .iter()
-        .filter(|r| matches!(r.status, report::Status::Skip | report::Status::Error))
-        .map(|r| {
-            t!(
-                lang,
-                "{} ({}) — {}",
-                "{}（{}）：{}",
-                r.label,
-                r.id,
-                r.summary
-            )
-        })
-        .collect();
-
-    let rep = Report {
-        tool_version: env!("CARGO_PKG_VERSION").to_string(),
-        lang,
-        started_at,
-        finished_at: util::iso8601_utc(),
-        duration_ms: (util::now_ms() - t0) as u64,
-        host: endpoint.host(),
-        base_url,
-        protocol,
-        model,
-        claimed_model,
-        depth: depth.as_str().to_string(),
-        request_count: ctx.client.request_count.get(),
-        results,
-        verdict: v,
-        identity,
-        billing,
-        channel,
-        perf,
-        skipped,
+    let mut on_event = |ev: Event<'_>| {
+        if args.quiet {
+            return;
+        }
+        if let Event::Finished {
+            result,
+            done,
+            total,
+        } = ev
+        {
+            term::progress_line(result, done, total, lang, use_color);
+        }
     };
+    let rep = engine::run(cfg, &Cancel::new(), &mut on_event).await?;
 
     if !args.quiet {
         term::summary(&rep, use_color);
@@ -493,6 +489,7 @@ mod tests {
 
     fn test_report(host: &str) -> Report {
         Report {
+            schema_version: llm_verify::report::schema_version(),
             tool_version: "0".into(),
             lang: i18n::Lang::En,
             started_at: String::new(),
@@ -504,11 +501,13 @@ mod tests {
             model: "m".into(),
             claimed_model: "m".into(),
             depth: "fast".into(),
+            seed: 0,
+            steps: vec![],
             request_count: 0,
             results: vec![],
-            verdict: report::Verdict {
-                authenticity: report::Authenticity::Inconclusive,
-                channel: report::Channel::Unknown,
+            verdict: llm_verify::report::Verdict {
+                authenticity: llm_verify::report::Authenticity::Inconclusive,
+                channel: llm_verify::report::Channel::Unknown,
                 score: 0.0,
                 confidence: 0.0,
                 hard_gate_hits: vec![],

@@ -8,7 +8,7 @@
 
 /// Output language. English is the default because the project's public face
 /// is English; Chinese is reachable explicitly or via the system locale.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum Lang {

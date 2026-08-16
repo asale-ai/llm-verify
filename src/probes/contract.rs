@@ -45,7 +45,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     {
         Ok(r) => r,
         Err(e) => {
-            *ctx.reachable.borrow_mut() = false;
+            ctx.set_reachable(false);
             return p
                 .error(t!(l, "Cannot connect: {e}", "无法连接：{e}"))
                 .finding(t!(l, "Every later probe was skipped — no other conclusion means anything when the endpoint is unreachable", "后续探针已全部跳过——连不上时其它结论都没有意义"))
@@ -60,7 +60,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     // re-report the same thing and burn quota doing it.
     match raw.status {
         401 | 403 => {
-            *ctx.reachable.borrow_mut() = false;
+            ctx.set_reachable(false);
             return p
                 .fail(t!(
                     l,
@@ -77,7 +77,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
                 .took(took);
         }
         404 => {
-            *ctx.reachable.borrow_mut() = false;
+            ctx.set_reachable(false);
             return p
                 .fail(t!(
                     l,
@@ -96,7 +96,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
                 .took(took);
         }
         s if s == 400 && raw.body.contains("model") => {
-            *ctx.reachable.borrow_mut() = false;
+            ctx.set_reachable(false);
             return p
                 .fail(t!(
                     l,
@@ -123,7 +123,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
                 .took(took);
         }
         s if !(200..300).contains(&s) => {
-            *ctx.reachable.borrow_mut() = false;
+            ctx.set_reachable(false);
             return p
                 .fail(format!("HTTP {s}"))
                 .evidence(body_excerpt)
@@ -225,7 +225,7 @@ pub async fn system_adherence(ctx: &Ctx) -> ProbeResult {
     )
     .weight(2);
     let t0 = now_ms();
-    let token = ctx.rng.borrow_mut().hex(6);
+    let token = ctx.rng.lock().unwrap().hex(6);
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         "What is my support reference code? Reply with the code only.",
@@ -568,7 +568,7 @@ pub async fn invalid_model(ctx: &Ctx) -> ProbeResult {
     let bogus = format!(
         "{}-nonexistent-{}",
         ctx.client.endpoint.model,
-        ctx.rng.borrow_mut().hex(6)
+        ctx.rng.lock().unwrap().hex(6)
     );
     let req = ping(ctx).model_id(&bogus);
     let raw = match ctx
@@ -788,7 +788,7 @@ pub async fn stop_sequence(ctx: &Ctx) -> ProbeResult {
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     // A marker the model has no reason to emit spontaneously.
-    let marker = format!("<<{}>>", ctx.rng.borrow_mut().hex(4));
+    let marker = format!("<<{}>>", ctx.rng.lock().unwrap().hex(4));
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         &format!(

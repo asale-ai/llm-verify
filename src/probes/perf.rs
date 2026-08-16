@@ -25,7 +25,7 @@ const CV_UNSTABLE: f64 = 0.5;
 
 pub async fn run(ctx: &Ctx) -> Vec<ProbeResult> {
     sample(ctx).await;
-    let samples = ctx.perf.borrow().clone();
+    let samples = ctx.perf.lock().unwrap().clone();
     let l = ctx.lang;
     vec![
         ttft(&samples, l),

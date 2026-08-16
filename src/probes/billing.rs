@@ -111,7 +111,7 @@ async fn token_recount(ctx: &Ctx) -> ProbeResult {
         ),
     };
 
-    ctx.billing.borrow_mut().push(BillingRound {
+    ctx.billing.lock().unwrap().push(BillingRound {
         probe: "token_recount".into(),
         billed_input: billed,
         honest_input: honest,
@@ -426,7 +426,7 @@ fn cost_ratio(ctx: &Ctx) -> ProbeResult {
         G,
     )
     .weight(3);
-    let rounds = ctx.billing.borrow();
+    let rounds = ctx.billing.lock().unwrap();
     if rounds.is_empty() {
         return p.skip(t!(l, "No metering samples available", "没有可用的计量样本"));
     }
@@ -596,7 +596,7 @@ async fn wrapper_marker(ctx: &Ctx) -> ProbeResult {
     // Scan both the answer and every raw body seen so far — a wrapper often
     // leaks in metadata rather than in the generated text.
     let mut haystack = resp.text.clone();
-    for b in ctx.raw_bodies.borrow().iter() {
+    for b in ctx.raw_bodies.lock().unwrap().iter() {
         haystack.push('\n');
         haystack.push_str(b);
     }

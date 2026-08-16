@@ -701,7 +701,7 @@ async fn capability_battery(ctx: &Ctx) -> (ProbeResult, BatteryResult) {
     for band in 0..3usize {
         for _ in 0..per_band {
             let q = {
-                let mut rng = ctx.rng.borrow_mut();
+                let mut rng = ctx.rng.lock().unwrap();
                 generate(&mut rng, band)
             };
             let Some((answer, _)) = ask(ctx, &q.prompt, 400).await else {
