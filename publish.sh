@@ -12,6 +12,10 @@
 #   ./publish.sh --dry-run "commit message"
 #   ./publish.sh --no-crate "commit message"   # skip crates.io
 #
+# Re-running after a failure resumes: if the tag already exists and points at
+# exactly this code, the git half is left alone and the release picks up from
+# whichever step went wrong.
+#
 # No interactive prompts. Credentials are read from .env and never written
 # into the repository. crates.io needs CARGO_API_KEY there.
 
@@ -23,6 +27,8 @@ DRY_RUN=0
 MESSAGE=""
 SKIP_CHECKS=0
 PUBLISH_CRATE=1
+RESUME=0
+ON_CRATES_IO=0
 
 die() { printf '\n\033[31m错误\033[0m: %s\n\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
@@ -30,7 +36,7 @@ info() { printf '  %s\n' "$*"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 
 usage() {
-  sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -90,14 +96,41 @@ info "标签    : $TAG"
 info "提交说明: $MESSAGE"
 [ "$DRY_RUN" = 1 ] && info "模式    : 预演（不做任何写操作）"
 
-git rev-parse "$TAG" >/dev/null 2>&1 && die "标签 $TAG 已存在。请用 --version 指定其它版本号。"
+CRATE=$(grep -m1 '^name *= *"' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+
+# ── the tag may already be here ───────────────────────────────────────────
+# The write order below is commit -> push -> tag -> push tag -> wait for CI ->
+# crates.io, and only the last step depends on anything outside this machine
+# staying up. When it fails — expired token, a blip at crates.io, a laptop
+# that went to sleep during the CI wait — everything before it has already
+# landed, and the only thing missing is one `cargo publish`.
+#
+# Refusing to run because the tag exists takes that repair away: the version
+# is spent (a tag cannot honestly be moved, and `--version` next would leave a
+# hole on crates.io), so all that is left is typing the publish command by
+# hand — the one step that most deserves to stay scripted.
+#
+# So an existing tag is a question rather than a verdict: does it point at
+# exactly the code we are about to publish? Tree equality plus a clean
+# worktree answers it — commit metadata may differ, content may not. If it
+# does, this is an interrupted run and we resume. If it does not, the tag
+# means something else and the old error still stands.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+  [ "$CURRENT" = "$NEXT" ] || die "标签 $TAG 已存在，但 Cargo.toml 里是 ${CURRENT}。
+     这两个对不上，说明 $TAG 不是这次要发的东西。请用 --version 指定其它版本号。"
+  [ -z "$(git status --porcelain)" ] || die "标签 $TAG 已存在，但工作区还有未提交的改动。
+     接着发会把这些改动一起发出去，和 $TAG 指向的内容对不上。
+     先提交或清掉它们再重跑，或者用 --version 指定其它版本号。"
+  [ "$(git rev-parse "$TAG^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ] \
+    || die "标签 $TAG 已存在，且指向的代码和当前 HEAD 不一致。请用 --version 指定其它版本号。"
+  RESUME=1
+fi
 
 # ── crates.io preflight ───────────────────────────────────────────────────
 # A crates.io release cannot be taken back, only yanked, and by the time we
 # would reach it the commit and the tag are already pushed. So everything that
 # can be known in advance — missing token, version already taken — is checked
 # here, before the first write.
-CRATE=$(grep -m1 '^name *= *"' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
 if [ "$PUBLISH_CRATE" = 1 ]; then
   if [ -z "${CARGO_API_KEY:-}" ]; then
     die "缺少 CARGO_API_KEY（放进 .env 即可，token 在 https://crates.io/settings/tokens 生成）。
@@ -110,7 +143,7 @@ if [ "$PUBLISH_CRATE" = 1 ]; then
     # Braces are load-bearing wherever full-width punctuation follows a
     # variable: bash reads the multibyte comma as part of the name and dies
     # under `set -u` with an "unbound variable" for a variable that is set.
-    200) info "crates.io 已有 $CRATE ${NEXT}，本次跳过 crate 发布"; PUBLISH_CRATE=0 ;;
+    200) info "crates.io 已有 $CRATE ${NEXT}，本次跳过 crate 发布"; PUBLISH_CRATE=0; ON_CRATES_IO=1 ;;
     404) info "crates.io  : 将发布 $CRATE $NEXT" ;;
     # A network failure here is not a reason to abort the whole release; the
     # publish step below will surface the real error if there is one.
@@ -118,14 +151,36 @@ if [ "$PUBLISH_CRATE" = 1 ]; then
   esac
 fi
 
+if [ "$RESUME" = 1 ]; then
+  # Tag and crate both present with nothing uncommitted: this version is fully
+  # out. Say so and stop, rather than spending twenty minutes re-watching a CI
+  # run whose result cannot change anything.
+  if [ "$ON_CRATES_IO" = 1 ]; then
+    step "$TAG 已经发布完成"
+    info "标签和 crates.io 上的 $CRATE $NEXT 都在，且就是当前这份代码 —— 没有要做的。"
+    info "要发新的一版就改代码后重跑，或用 --version 指定版本号。"
+    printf '\n'
+    exit 0
+  fi
+  step "续跑 $TAG"
+  info "$TAG 已存在且指向当前这份代码 —— 跳过改版本号和提交，从上次断掉的地方接着发。"
+fi
+
 # ── checks ────────────────────────────────────────────────────────────────
 if [ "$SKIP_CHECKS" = 0 ]; then
   step "检查"
-  cargo fmt --check >/dev/null 2>&1 && ok "cargo fmt" || {
+  if cargo fmt --check >/dev/null 2>&1; then
+    ok "cargo fmt"
+  elif [ "$RESUME" = 1 ]; then
+    # Reformatting on the resume path would change files that $TAG already
+    # pins, and there is no commit step left to absorb them.
+    die "cargo fmt 有差异，但这次是续跑 ${TAG}，改动没有地方提交。
+     先自己 cargo fmt 并处理掉这些改动，或者用 --version 发一个新版本。"
+  else
     info "cargo fmt 有差异，正在自动修复…"
     cargo fmt
     ok "cargo fmt（已自动格式化）"
-  }
+  fi
   cargo clippy --all-targets -- -D warnings >/dev/null 2>&1 \
     && ok "cargo clippy" \
     || die "cargo clippy 有告警。修复后重试，或用 --skip-checks 跳过。"
@@ -133,11 +188,20 @@ if [ "$SKIP_CHECKS" = 0 ]; then
   cargo build --release --quiet && ok "release 构建通过"
   SIZE=$(ls -lh target/release/llm-verify 2>/dev/null | awk '{print $5}')
   [ -n "$SIZE" ] && info "二进制体积: $SIZE"
+
+  # Anything the checks wrote (a re-resolved Cargo.lock, say) would ship in the
+  # crate without ever reaching $TAG. Cheap to notice here, invisible later.
+  if [ "$RESUME" = 1 ] && [ -n "$(git status --porcelain)" ]; then
+    die "检查这一步动了工作区里的文件，但续跑 $TAG 没有提交环节，发出去就会和标签对不上。
+     看一眼 git status，处理完再重跑。"
+  fi
 fi
 
 # ── version bump ──────────────────────────────────────────────────────────
 step "更新版本号"
-if [ "$DRY_RUN" = 1 ]; then
+if [ "$RESUME" = 1 ]; then
+  info "Cargo.toml 已经是 ${NEXT}，跳过"
+elif [ "$DRY_RUN" = 1 ]; then
   info "将把 Cargo.toml 的 version 改为 $NEXT"
 else
   # Only the [package] version — the first `version =` in the file. Anchoring
@@ -156,9 +220,14 @@ fi
 # ── commit and push ───────────────────────────────────────────────────────
 step "提交并推送"
 if [ "$DRY_RUN" = 1 ]; then
-  git status --short | sed 's/^/  /'
-  info "将提交上述改动并推送到 origin/$BRANCH"
-  info "将创建标签 $TAG 并推送"
+  if [ "$RESUME" = 1 ]; then
+    info "$TAG 已存在且指向当前这份代码，不会再提交或改动标签"
+    info "会确认 origin/$BRANCH 和 $TAG 都在远端（上次可能正断在推标签那一步）"
+  else
+    git status --short | sed 's/^/  /'
+    info "将提交上述改动并推送到 origin/$BRANCH"
+    info "将创建标签 $TAG 并推送"
+  fi
   if [ "$PUBLISH_CRATE" = 1 ]; then
     info "CI 构建通过后，将发布 $CRATE $NEXT 到 crates.io"
   else
@@ -169,22 +238,29 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
-git add -A
-if git diff --cached --quiet; then
-  info "没有需要提交的改动"
-else
-  git commit -q -m "$MESSAGE
+if [ "$RESUME" = 0 ]; then
+  git add -A
+  if git diff --cached --quiet; then
+    info "没有需要提交的改动"
+  else
+    git commit -q -m "$MESSAGE
 
 Release $TAG"
-  ok "已提交"
+    ok "已提交"
+  fi
 fi
 
 git push -q origin "$BRANCH" || die "推送到 origin/$BRANCH 失败"
 ok "已推送到 origin/$BRANCH"
 
-git tag -a "$TAG" -m "Release $TAG
+# On the resume path the tag is already here; re-pushing an identical tag is a
+# no-op, and it is the one thing worth redoing blindly — the previous run may
+# well have died on exactly this push, leaving the tag local-only.
+if [ "$RESUME" = 0 ]; then
+  git tag -a "$TAG" -m "Release $TAG
 
 $MESSAGE"
+fi
 git push -q origin "$TAG" || die "推送标签 $TAG 失败"
 ok "已推送标签 $TAG"
 
