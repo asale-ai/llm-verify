@@ -62,6 +62,6 @@ pub mod html;
 pub use client::{Endpoint, RequestOpts};
 pub use engine::{run, RunConfig};
 pub use i18n::Lang;
-pub use probes::{Cancel, Depth, Event, Pace, Selection, Subject};
+pub use probes::{Cancel, Depth, Event, Pace, Schedule, Selection, Subject};
 pub use protocol::Protocol;
 pub use report::{Authenticity, Channel, ProbeResult, Report, Status, Verdict};

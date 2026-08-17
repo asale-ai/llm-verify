@@ -161,11 +161,17 @@ pub struct Client {
     pub endpoint: Endpoint,
     /// Every request the run has made, for the report's request ledger.
     ///
-    /// Atomic rather than `Cell` so a probe future stays `Send`. Probes run
-    /// sequentially and nothing here is contended; what the atomic buys is the
-    /// ability to `await` this engine from a multi-threaded runtime — an
-    /// embedder's request handler cannot hold a `!Send` future.
+    /// Atomic rather than `Cell` so a probe future stays `Send`. What the
+    /// atomic buys is the ability to `await` this engine from a multi-threaded
+    /// runtime — an embedder's request handler cannot hold a `!Send` future —
+    /// and, since [`RunConfig::concurrency`](crate::engine::RunConfig::concurrency),
+    /// correctness under genuinely simultaneous probes.
     pub request_count: std::sync::atomic::AtomicU32,
+    /// How many requests this client may have in flight at once.
+    ///
+    /// `None` is unlimited, which is the right answer for a sequential run and
+    /// the wrong one for a concurrent one. See [`Client::with_limit`].
+    limit: Option<std::sync::Arc<tokio::sync::Semaphore>>,
 }
 
 impl Client {
@@ -199,6 +205,44 @@ impl Client {
             http,
             endpoint,
             request_count: std::sync::atomic::AtomicU32::new(0),
+            limit: None,
+        }
+    }
+
+    /// Cap how many requests this client may have in flight at once.
+    ///
+    /// # Why the cap lives here and not in the scheduler
+    ///
+    /// Concurrency has two units in this crate and only one of them is worth
+    /// bounding. The scheduler's unit is the *step*, and steps are wildly
+    /// uneven — the capability battery is a dozen requests, `stop_sequence` is
+    /// one — so "four steps at a time" says almost nothing about how much
+    /// traffic is actually in the air. The unit that matters to whoever is
+    /// answering is the *request*, and every request in the suite passes
+    /// through this type.
+    ///
+    /// That matters most to the caller this exists for: one probing somebody
+    /// else's endpoint, where the far end has a concurrency budget of its own
+    /// that it did not agree to spend on being examined. Overrun it and the
+    /// endpoint starts refusing — and a refusal is indistinguishable, from
+    /// here, from the endpoint being broken. A run that saturates its subject
+    /// measures the saturation.
+    pub fn with_limit(mut self, permits: usize) -> Self {
+        self.limit =
+            (permits > 0).then(|| std::sync::Arc::new(tokio::sync::Semaphore::new(permits)));
+        self
+    }
+
+    /// Hold one of the concurrency permits, if there are any, for as long as
+    /// the returned guard lives.
+    ///
+    /// The semaphore is never closed, so the acquire cannot fail; `ok()` is
+    /// there to keep an unreachable error out of every call site rather than
+    /// to handle it.
+    async fn permit(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        match &self.limit {
+            Some(s) => s.clone().acquire_owned().await.ok(),
+            None => None,
         }
     }
 
@@ -251,6 +295,11 @@ impl Client {
         body: &Value,
         opts: &RequestOpts,
     ) -> Result<RawResponse> {
+        // Held until the body has been read, not merely until the headers
+        // arrive: a generation that is still streaming is still occupying the
+        // far end, and releasing early would let the cap be exceeded by exactly
+        // the requests that take longest.
+        let _permit = self.permit().await;
         self.count_request();
         let url = self.endpoint.url(path);
         let payload = match &opts.raw_body {
@@ -280,6 +329,7 @@ impl Client {
     }
 
     pub async fn get_raw(&self, path: &str, opts: &RequestOpts) -> Result<RawResponse> {
+        let _permit = self.permit().await;
         self.count_request();
         let url = self.endpoint.url(path);
         let mut req = self.http.get(&url);
@@ -336,6 +386,7 @@ impl Client {
 
     /// Stream a chat request, timing the first content-bearing event.
     pub async fn stream(&self, req: &ChatRequest) -> Result<StreamResult> {
+        let _permit = self.permit().await;
         self.count_request();
         let proto = self.endpoint.protocol;
         let body = req.clone().stream(true).to_body(proto);

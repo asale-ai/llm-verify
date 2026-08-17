@@ -24,18 +24,12 @@ use std::collections::BTreeMap;
 
 const G: Group = Group::Identity;
 
-pub async fn run(ctx: &Ctx) -> Vec<ProbeResult> {
-    let mut out = Vec::with_capacity(8);
-    out.push(self_id(ctx).await);
-    out.push(meta_creator(ctx).await);
-    out.push(context_claim(ctx).await);
-    out.push(cutoff_claim(ctx).await);
-    out.push(world_knowledge(ctx).await);
-    let battery = capability_battery(ctx).await;
-    out.push(battery.0);
-    out.push(verbosity(ctx).await);
-    out.push(tier_estimate(ctx, &battery.1));
-    out
+/// The battery and the tier it implies, which is one step because the estimate
+/// is nothing but a reading of the battery's own result.
+pub async fn capability(ctx: &Ctx) -> Vec<ProbeResult> {
+    let (result, battery) = capability_battery(ctx).await;
+    let tier = tier_result(&ctx.claimed_model, ctx.lang, &battery);
+    vec![result, tier]
 }
 
 // ── family recognition ─────────────────────────────────────────────────────
@@ -199,7 +193,7 @@ async fn ask(ctx: &Ctx, prompt: &str, max_tokens: u32) -> Option<(String, u64)> 
     }
 }
 
-async fn self_id(ctx: &Ctx) -> ProbeResult {
+pub async fn self_id(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new("self_id", ts!(l, "Self-identification", "自我身份声明"), G).weight(2);
     let Some((text, took)) = ask(
@@ -241,7 +235,7 @@ async fn self_id(ctx: &Ctx) -> ProbeResult {
     }
 }
 
-async fn meta_creator(ctx: &Ctx) -> ProbeResult {
+pub async fn meta_creator(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new(
         "meta_creator",
@@ -281,7 +275,7 @@ async fn meta_creator(ctx: &Ctx) -> ProbeResult {
     }
 }
 
-async fn context_claim(ctx: &Ctx) -> ProbeResult {
+pub async fn context_claim(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new(
         "context_claim",
@@ -353,7 +347,7 @@ const DATED_FACTS: &[(&str, &str, f64, &str, &[&str])] = &[
     ),
 ];
 
-async fn cutoff_claim(ctx: &Ctx) -> ProbeResult {
+pub async fn cutoff_claim(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new(
         "cutoff_claim",
@@ -400,7 +394,7 @@ async fn cutoff_claim(ctx: &Ctx) -> ProbeResult {
 /// This needs no external ground truth about "now": if a model claims a 2025-06
 /// cutoff but cannot name a mid-2024 head of government, its claim and its
 /// knowledge disagree, and that internal contradiction is the finding.
-async fn world_knowledge(ctx: &Ctx) -> ProbeResult {
+pub async fn world_knowledge(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new(
         "world_knowledge",
@@ -698,33 +692,56 @@ async fn capability_battery(ctx: &Ctx) -> (ProbeResult, BatteryResult) {
     let mut lengths: Vec<f64> = Vec::new();
     let mut misses: Vec<String> = Vec::new();
 
-    for band in 0..3usize {
-        for _ in 0..per_band {
-            let q = {
-                let mut rng = ctx.rng.lock().unwrap();
-                generate(&mut rng, band)
-            };
-            let Some((answer, _)) = ask(ctx, &q.prompt, 400).await else {
-                continue;
-            };
-            asked[band] += 1;
-            lengths.push(answer.chars().count() as f64);
-            if answer_matches(&answer, &q.answer) {
-                correct[band] += 1;
-            } else if misses.len() < 6 {
-                misses.push(t!(
-                    l,
-                    "{} question wrong: expected {}, got {}",
-                    "{} 题答错：期望 {}，得到 {}",
-                    [
-                        t!(l, "easy", "易"),
-                        t!(l, "medium", "中"),
-                        t!(l, "hard", "难")
-                    ][band],
-                    q.answer,
-                    crate::util::truncate(answer.trim(), 40)
-                ));
-            }
+    // Every question is generated before any of them is sent.
+    //
+    // Two reasons, and the second is the one that bites. Generating inside the
+    // request loop would interleave draws with `.await`s, so under a concurrent
+    // schedule the questions a seed produces would depend on which reply came
+    // back first — and a seed that does not reproduce its own questions cannot
+    // answer a challenge to the verdict it produced. It also means the
+    // generator's lock is never anywhere near an await point.
+    let mut rng = ctx.rng_for("capability");
+    let questions: Vec<(usize, Question)> = (0..3usize)
+        .flat_map(|band| {
+            (0..per_band)
+                .map(|_| (band, generate(&mut rng, band)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    // Asked together rather than one after another. They are independent
+    // questions with independent answers, so nothing about what any of them
+    // measures changes — what changes is that a battery costs one round trip
+    // instead of `3 * per_band` of them. How many actually go at once is the
+    // client's permit pool, not this.
+    let answers = futures_util::future::join_all(
+        questions
+            .iter()
+            .map(|(_, q)| async move { ask(ctx, &q.prompt, 400).await }),
+    )
+    .await;
+
+    for ((band, q), answer) in questions.iter().zip(answers) {
+        let (band, Some((answer, _))) = (*band, answer) else {
+            continue;
+        };
+        asked[band] += 1;
+        lengths.push(answer.chars().count() as f64);
+        if answer_matches(&answer, &q.answer) {
+            correct[band] += 1;
+        } else if misses.len() < 6 {
+            misses.push(t!(
+                l,
+                "{} question wrong: expected {}, got {}",
+                "{} 题答错：期望 {}，得到 {}",
+                [
+                    t!(l, "easy", "易"),
+                    t!(l, "medium", "中"),
+                    t!(l, "hard", "难")
+                ][band],
+                q.answer,
+                crate::util::truncate(answer.trim(), 40)
+            ));
         }
     }
 
@@ -804,7 +821,7 @@ async fn capability_battery(ctx: &Ctx) -> (ProbeResult, BatteryResult) {
     (p.took(took), battery)
 }
 
-async fn verbosity(ctx: &Ctx) -> ProbeResult {
+pub async fn verbosity(ctx: &Ctx) -> ProbeResult {
     let l = ctx.lang;
     let p = ProbeResult::new("verbosity", ts!(l, "Default verbosity", "默认冗长度"), G)
         .weight(1)
@@ -874,8 +891,22 @@ pub fn best_tier(scores: &BTreeMap<String, f64>) -> Option<(Tier, f64, f64)> {
     Some((tier, **top, **top - runner_up))
 }
 
-fn tier_estimate(ctx: &Ctx, b: &BatteryResult) -> ProbeResult {
-    let l = ctx.lang;
+/// Fit a tier to a battery result and compare it with what the model was sold
+/// as.
+///
+/// Public, and takes the claim rather than a [`Ctx`], because the battery it
+/// reads does not have to be this crate's. An embedder policing a marketplace
+/// keeps a private bank of questions — the published ones are readable by the
+/// endpoint being probed, which is the ceiling on what they can prove — and
+/// still wants its measurements turned into the same `tier_estimate` result, on
+/// the same thresholds, feeding the same [`Identity`](crate::report::Identity)
+/// fields. Reimplementing this on their side would be a second set of
+/// thresholds nobody keeps in step with these.
+///
+/// The severity it reports is directional: measuring *below* the claim is the
+/// downgrade a buyer paid for and did not receive; measuring above it is not
+/// fraud and never scores as one.
+pub fn tier_result(claimed_model: &str, l: Lang, b: &BatteryResult) -> ProbeResult {
     let p = ProbeResult::new(
         "tier_estimate",
         ts!(l, "Tier estimate vs claim", "档位反推与比对"),
@@ -894,7 +925,7 @@ fn tier_estimate(ctx: &Ctx, b: &BatteryResult) -> ProbeResult {
     let Some((estimated, fit, margin)) = best_tier(&scores) else {
         return p.skip(t!(l, "Cannot compute a tier", "无法计算档位"));
     };
-    let claimed = tier_from_model_id(&ctx.claimed_model);
+    let claimed = tier_from_model_id(claimed_model);
 
     let mut p = p
         .metric("estimated_tier", estimated.as_str())

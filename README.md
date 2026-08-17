@@ -72,6 +72,8 @@ Same model, same verdict, two points apart — and the reports still differ. Ope
 |---|---|
 | `--protocol anthropic\|openai` | Inferred from the URL and model name if omitted |
 | `--depth fast\|balanced\|forensic` | Default `balanced`. `forensic` samples more — slower and costlier, but firmer |
+| `--turbo` | The quickest run that still reaches a verdict: 9 requests instead of 21, several at a time. Gives up the corroborating identity probes and the contract checks that catch a reconstructed endpoint |
+| `--concurrency N` | Requests to keep in flight. Default 1. Only raise it against an endpoint you know answers that many at once — latency probes always run alone |
 | `--claimed-model <ID>` | Use when the vendor's advertised name differs from the ID you request. This is how you check for a downgrade |
 | `--lang en\|zh` | Report language. Follows the system locale, then falls back to English |
 | `-o <path>` | HTML report path; pass a directory to auto-name the file |
@@ -180,9 +182,35 @@ let cfg = engine::RunConfig::new(endpoint)
     .pace(Duration::from_secs(20), Duration::from_secs(180));
 ```
 
+### When somebody is waiting for the answer
+
+`Selection::turbo()` is `model_only` cut down to the probes a conclusion actually rests on, run several at a time:
+
+```rust
+let cfg = engine::RunConfig::new(endpoint).turbo(3);
+```
+
+The argument is how many requests the endpoint will answer at once — a statement about the far end, not about this crate. Set it too high and the run measures the endpoint's saturation instead of its behaviour, and on anything with a per-account concurrency budget it spends that budget on being examined. When in doubt, three.
+
+Two things make overlapping safe rather than merely fast. Steps that measure a clock run alone, so a latency figure is never taken while this run has three other requests in the air. And each step draws its random payloads from its own generator, seeded from the run's seed and the step's id, so the same seed reproduces the same questions whatever order the scheduler happened to run them in.
+
+What turbo gives up is documented probe by probe on `Selection::turbo`. The short version: the corroborating and merely descriptive identity probes, the dated-trivia knowledge check, and the three contract checks that catch an endpoint reconstructed from a web session. Put the last group back if you have not otherwise established what is on the far end:
+
+```rust
+Selection::turbo().plus(["max_tokens_truncation", "stop_sequence", "system_adherence"])
+```
+
 ### Progress, cancellation, and your own probes
 
 `engine::run` reports each step as it starts and finishes, and takes a `Cancel` that is honoured between steps. `Selection::with` appends your own [`Probe`] implementations, which share the run's client, seed and observation buffers — so a private probe is indistinguishable from a built-in one both in the report and on the wire. That matters if you are policing a marketplace: everything in this repository is readable by the endpoint you are probing.
+
+To put your own graded questions in place of the published battery — worth doing for exactly that reason — use `replacing`, which drops the built-in step and lets your probe answer to its id:
+
+```rust
+Selection::turbo().replacing("capability", Arc::new(my_bank))
+```
+
+Not `minus(["capability"]).with(bank)`. `skip` applies to caller-supplied probes too, deliberately, so that spelling removes both and reports nothing: the run comes back with every other probe passing and the questions never asked.
 
 ### What it costs
 
@@ -190,6 +218,7 @@ Measured, not estimated — `tests/request_budget.rs` pins these so that adding 
 
 | Selection | Depth | Requests |
 |---|---|---|
+| `turbo` | `fast` | 9 |
 | `model_only` | `fast` | 21 |
 | `model_only` | `forensic` | 46 |
 | everything | `balanced` | 49 |

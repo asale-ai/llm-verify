@@ -72,6 +72,8 @@ llm-verify
 |---|---|
 | `--protocol anthropic\|openai` | 不填会根据 URL 与模型名自动推断 |
 | `--depth fast\|balanced\|forensic` | 默认 `balanced`。`forensic` 采样更多、更慢更贵，但结论更硬 |
+| `--turbo` | 还能给出结论的最快跑法：9 次请求而不是 21 次，且并发发出。代价是放弃佐证性的身份探针，以及用来识别「网页会话重建出来的端点」的那几项契约检查 |
+| `--concurrency N` | 同时在途的请求数，默认 1。只在你确知对面能同时应答这么多时才调高 —— 延迟类探针任何时候都独占运行 |
 | `--claimed-model <ID>` | 供应商宣称的模型名与实际请求的不同时用——查降级就靠它 |
 | `--lang en\|zh` | 报告语言。默认跟随系统 locale，识别不出则用英文 |
 | `-o <path>` | HTML 报告路径，传目录则自动命名 |

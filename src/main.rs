@@ -79,11 +79,32 @@ struct RunArgs {
     #[arg(long)]
     model_only: bool,
 
-    /// Comma-separated probe ids to run; everything else is skipped
+    /// The quickest run that still reaches a verdict: --model-only cut down to
+    /// the probes a conclusion rests on, at fast depth, several at a time.
+    ///
+    /// Nine requests instead of twenty-one, and in about four round trips
+    /// rather than nine. What it gives up is the corroborating and merely
+    /// descriptive identity probes, and the three contract checks that catch an
+    /// endpoint reconstructed from a web session — so reach for it when you
+    /// already know what kind of thing is on the far end and want to know
+    /// whether the model behind it is the one advertised.
+    #[arg(long)]
+    turbo: bool,
+
+    /// Requests to keep in flight. 1 is sequential, which is the default.
+    ///
+    /// Only worth raising against an endpoint you know will answer that many at
+    /// once: overrun its concurrency and the run measures the queue rather than
+    /// the model. Latency probes always run alone regardless.
+    #[arg(long, default_value_t = 1)]
+    concurrency: usize,
+
+    /// Comma-separated probe ids to run; everything else is skipped.
+    /// A group name (contract, identity, billing, …) selects the whole group.
     #[arg(long, value_delimiter = ',')]
     only: Vec<String>,
 
-    /// Comma-separated probe ids to skip
+    /// Comma-separated probe ids or group names to skip
     #[arg(long, value_delimiter = ',')]
     skip: Vec<String>,
 
@@ -275,6 +296,14 @@ async fn run(args: RunArgs) -> Result<i32> {
             args.depth
         ))
     })?;
+    // `--turbo` implies fast depth, but an explicit `--depth` still wins: the
+    // preset is a starting point, not a mode that locks the other flags out.
+    // Resolved here rather than at the call site so the banner names the depth
+    // the run will actually use.
+    let depth = match (args.turbo, depth) {
+        (true, Depth::Balanced) => Depth::Fast,
+        (_, d) => d,
+    };
 
     let claimed_model = args.claimed_model.clone().unwrap_or_else(|| model.clone());
 
@@ -295,7 +324,9 @@ async fn run(args: RunArgs) -> Result<i32> {
         term::banner(&endpoint, depth, &claimed_model, lang, use_color);
     }
 
-    let selection = if args.model_only {
+    let selection = if args.turbo {
+        Selection::turbo()
+    } else if args.model_only {
         Selection::model_only()
     } else {
         Selection {
@@ -305,10 +336,20 @@ async fn run(args: RunArgs) -> Result<i32> {
         }
     };
 
+    // Same rule as the depth override above: the preset picks a starting point
+    // and an explicit `--concurrency` overrides it.
+    let overlap = match (args.turbo, args.concurrency) {
+        (true, 1) => 3,
+        (_, n) => n,
+    };
     let mut cfg = engine::RunConfig::new(endpoint)
         .depth(depth)
         .lang(lang)
-        .claimed_model(claimed_model.clone());
+        .claimed_model(claimed_model.clone())
+        .concurrency(overlap)
+        // Steps are uneven, so bounding them does not bound the traffic. This
+        // does, and it is what the endpoint actually feels.
+        .max_in_flight(overlap);
     cfg.selection = selection;
     cfg.seed = args.seed;
 

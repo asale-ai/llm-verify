@@ -225,7 +225,7 @@ pub async fn system_adherence(ctx: &Ctx) -> ProbeResult {
     )
     .weight(2);
     let t0 = now_ms();
-    let token = ctx.rng.lock().unwrap().hex(6);
+    let token = ctx.rng_for("system_adherence").hex(6);
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         "What is my support reference code? Reply with the code only.",
@@ -568,7 +568,7 @@ pub async fn invalid_model(ctx: &Ctx) -> ProbeResult {
     let bogus = format!(
         "{}-nonexistent-{}",
         ctx.client.endpoint.model,
-        ctx.rng.lock().unwrap().hex(6)
+        ctx.rng_for("invalid_model").hex(6)
     );
     let req = ping(ctx).model_id(&bogus);
     let raw = match ctx
@@ -788,7 +788,7 @@ pub async fn stop_sequence(ctx: &Ctx) -> ProbeResult {
     let t0 = now_ms();
     let proto = ctx.client.endpoint.protocol;
     // A marker the model has no reason to emit spontaneously.
-    let marker = format!("<<{}>>", ctx.rng.lock().unwrap().hex(4));
+    let marker = format!("<<{}>>", ctx.rng_for("stop_sequence").hex(4));
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         &format!(

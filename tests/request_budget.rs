@@ -106,6 +106,136 @@ async fn model_only_at_fast_depth_stays_within_its_budget() {
     );
 }
 
+/// The turbo configuration, which is the one a seller waits on.
+///
+/// Under half of `model_only`, and the half it drops was chosen probe by probe
+/// — see [`Selection::turbo`]. Pinned tightly on purpose: turbo exists to be
+/// cheap, and a step quietly added back into it would be a run no longer worth
+/// having a second preset for.
+#[tokio::test]
+async fn turbo_at_fast_depth_is_under_half_of_model_only() {
+    let turbo = count(Selection::turbo(), Depth::Fast).await;
+    let sample = count(Selection::model_only(), Depth::Fast).await;
+    println!("turbo + fast = {turbo} requests, model_only = {sample}");
+    assert!(
+        (8..=10).contains(&turbo),
+        "turbo costs {turbo} requests; if that is intended, update this bound and the \
+         doc comment on `Selection::turbo` that quotes it"
+    );
+    assert!(
+        turbo * 2 <= sample,
+        "turbo ({turbo}) is not meaningfully cheaper than model_only ({sample})"
+    );
+}
+
+/// Handing the grading to a private bank has to *replace* the published
+/// battery, not sit beside it.
+///
+/// The mistake this guards is paying for both: an embedder appends its own
+/// probe, forgets that `capability` is still in the selection, and every run
+/// quietly asks two sets of graded questions. Three requests is a third of
+/// turbo, and nothing in the report would look wrong.
+#[tokio::test]
+async fn dropping_the_published_battery_refunds_its_requests() {
+    let with = count(Selection::turbo(), Depth::Fast).await;
+    let without = count(Selection::turbo().minus(["capability"]), Depth::Fast).await;
+    println!("turbo = {with} requests, turbo minus capability = {without}");
+    assert_eq!(
+        with - without,
+        3,
+        "the battery is three requests at Depth::Fast"
+    );
+}
+
+/// A probe standing in for a built-in step actually runs.
+///
+/// The bug this exists for shipped nowhere but came within one measurement of
+/// it. Replacing the published battery with a private one was written the
+/// obvious way — `minus(["capability"])` to drop the built-in, `with(bank)` to
+/// add the replacement — and `skip` applies to custom probes too, on purpose,
+/// so it removed both. The run came back a step short with every other probe
+/// passing: no error, no warning, a verdict assembled out of a capability
+/// measurement nobody took.
+///
+/// Nothing about the report would have said so. Only the request count does.
+#[tokio::test]
+async fn a_replacement_probe_is_not_deleted_by_the_step_it_replaces() {
+    struct Bank;
+    impl llm_verify::probes::Probe for Bank {
+        // The same id as the step it stands in for, which is the entire point:
+        // everything downstream looks capability measurements up by name.
+        fn id(&self) -> &str {
+            "capability"
+        }
+        fn run<'a>(
+            &'a self,
+            ctx: &'a llm_verify::probes::Ctx,
+        ) -> llm_verify::probes::ProbeFuture<'a> {
+            Box::pin(async move {
+                let req = llm_verify::protocol::ChatRequest::new(
+                    &ctx.client.endpoint.model,
+                    "a question the endpoint has never seen",
+                );
+                let _ = ctx.client.chat(&req).await;
+                vec![llm_verify::report::ProbeResult::new(
+                    "capability",
+                    "battery",
+                    llm_verify::report::Group::Identity,
+                )
+                .pass("ok")]
+            })
+        }
+    }
+
+    let base = count(Selection::turbo().minus(["capability"]), Depth::Fast).await;
+    let replaced = count(
+        Selection::turbo().replacing("capability", Arc::new(Bank)),
+        Depth::Fast,
+    )
+    .await;
+    assert_eq!(
+        replaced,
+        base + 1,
+        "the replacement probe never issued its request — it was dropped by the \
+         skip that removed the step it replaces"
+    );
+}
+
+/// Concurrency is a schedule, not a shortcut.
+///
+/// Overlapping the steps must change how long a run takes and nothing else.
+/// The bill is the one thing an embedder reselling somebody else's capacity
+/// cannot check by looking, so it is checked here: same selection, same depth,
+/// same number of requests, whatever the schedule.
+#[tokio::test]
+async fn overlapping_the_steps_does_not_change_what_is_asked() {
+    let sequential = count(Selection::turbo(), Depth::Fast).await;
+    let (base_url, hits) = stub().await;
+    let cfg = engine::RunConfig::new(Endpoint {
+        base_url,
+        api_key: "k".into(),
+        protocol: Protocol::Anthropic,
+        model: "claude-opus-4-5".into(),
+        ..Default::default()
+    })
+    .turbo(4)
+    .seed(0xA11CE);
+    let report = engine::run(cfg, &Cancel::new(), &mut |_| {}).await.unwrap();
+    assert_eq!(report.request_count as usize, hits.load(Ordering::Relaxed));
+    assert_eq!(
+        report.request_count as usize, sequential,
+        "the same selection asked a different number of questions when overlapped"
+    );
+    // And the results still arrive in registry order, so anything reading the
+    // report positionally rather than by id cannot tell either.
+    let ids: Vec<&str> = report.results.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids.first(), Some(&"preflight"));
+    assert!(
+        ids.iter().position(|i| *i == "self_id") < ids.iter().position(|i| *i == "ttft"),
+        "identity results should still precede the perf ones: {ids:?}"
+    );
+}
+
 /// What a drift-triggered recheck costs.
 ///
 /// `Kind::Recheck` probes at `forensic`, and unlike the other two it is not

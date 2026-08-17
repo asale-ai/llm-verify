@@ -11,7 +11,7 @@ pub mod stream;
 
 use crate::client::Client;
 use crate::i18n::Lang;
-use crate::report::{BillingRound, ProbeResult};
+use crate::report::{BillingRound, Group, ProbeResult};
 use crate::util::Rng;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -96,19 +96,22 @@ impl PerfSample {
 
 /// Shared state.
 ///
-/// Probes run sequentially and nothing here is ever contended, so the lock is
-/// not buying mutual exclusion — it is buying `Sync`. This used to be
+/// The locks are not buying mutual exclusion so much as `Sync`. This used to be
 /// `RefCell`, which made every probe future `!Send` and therefore impossible to
 /// `await` from a multi-threaded runtime: an embedded caller (a request handler
 /// spawning a verification) could not hold the future at all. Nothing may hold
 /// one of these guards across an `.await`; each site below takes it, reads or
-/// pushes, and drops it in the same expression.
+/// pushes, and drops it in the same expression. That rule was a tidiness
+/// convention while steps ran one at a time and is load bearing now that they
+/// may not — see [`run_steps`].
 pub struct Ctx {
     pub client: Client,
     pub depth: Depth,
     pub lang: Lang,
     pub claimed_model: String,
-    pub rng: Mutex<Rng>,
+    /// The run's seed. Every random payload is derived from it and from the id
+    /// of the step that asks — see [`Ctx::rng_for`].
+    pub seed: u64,
     pub perf: Mutex<Vec<PerfSample>>,
     pub billing: Mutex<Vec<BillingRound>>,
     /// Response headers from every successful call, for channel classification.
@@ -121,23 +124,32 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn new(client: Client, depth: Depth, lang: Lang, claimed_model: String) -> Self {
-        Self::with_rng(client, depth, lang, claimed_model, Rng::new())
+        Self::with_seed(client, depth, lang, claimed_model, Rng::new().next_u64())
     }
 
-    /// The same, on a caller-chosen random source — see [`Rng::from_seed`].
-    pub fn with_rng(
+    /// The same, on a caller-chosen seed.
+    ///
+    /// Replaces the `with_rng` of earlier releases, which handed the whole run
+    /// one shared generator. That worked exactly as long as the steps ran in a
+    /// fixed order: draw order *was* step order, so a seed reproduced a run.
+    /// Under [`RunConfig::concurrency`](crate::engine::RunConfig::concurrency)
+    /// it does not — whichever step wins the race draws first — and a seed that
+    /// reproduces a different set of questions each time is not a seed, it is
+    /// decoration. The generator is therefore per step now, and the id is half
+    /// of what seeds it.
+    pub fn with_seed(
         client: Client,
         depth: Depth,
         lang: Lang,
         claimed_model: String,
-        rng: Rng,
+        seed: u64,
     ) -> Self {
         Self {
             client,
             depth,
             lang,
             claimed_model,
-            rng: Mutex::new(rng),
+            seed,
             perf: Mutex::new(Vec::new()),
             billing: Mutex::new(Vec::new()),
             headers: Mutex::new(Vec::new()),
@@ -145,6 +157,29 @@ impl Ctx {
             raw_bodies: Mutex::new(Vec::new()),
             reachable: Mutex::new(true),
         }
+    }
+
+    /// A generator belonging to one step, and to one run.
+    ///
+    /// Two steps never share a stream, so the payloads a seed produces do not
+    /// depend on the order the scheduler happened to run them in, or on whether
+    /// an earlier step was skipped. Same seed and same step id rebuild the same
+    /// questions on any machine — which is what makes the seed in the report
+    /// worth recording, and a contested verdict answerable question by question.
+    ///
+    /// A step that draws more than once must therefore hold on to what this
+    /// returns rather than calling again per draw, or every draw is the first
+    /// draw. Steps that fan their requests out concurrently have to generate
+    /// everything up front for the same reason.
+    pub fn rng_for(&self, step_id: &str) -> Rng {
+        // FNV-1a, inlined: the requirement is that the mixing never changes
+        // between releases, which no hasher from the standard library promises.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in step_id.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Rng::from_seed(self.seed ^ h)
     }
 
     /// Record everything a later probe might want from a raw response.
@@ -213,6 +248,10 @@ pub struct ProbeSpec {
     /// Stable across releases. Callers persist these, filter on them, and
     /// localise labels from them, so renaming one is a breaking change.
     pub id: &'static str,
+    /// Which section of the report this step's results land in. Also selectable
+    /// — see [`Selection::only`] — so `identity` addresses the whole family of
+    /// identity steps without naming each one.
+    pub group: Group,
     pub subject: Subject,
     /// How many results this step contributes, for progress totals. Steps whose
     /// output depends on what earlier steps observed report their maximum.
@@ -220,6 +259,9 @@ pub struct ProbeSpec {
     /// Runs regardless of the caller's subject filter, because the rest of the
     /// suite is meaningless without it.
     pub always: bool,
+    /// Must have the run to itself: nothing else may be in flight while it
+    /// runs. See [`run_steps`] for why anything measuring a clock has to be.
+    pub exclusive: bool,
     pub run: for<'a> fn(&'a Ctx) -> ProbeFuture<'a>,
 }
 
@@ -256,6 +298,14 @@ pub trait Probe: Send + Sync {
     fn results(&self) -> usize {
         1
     }
+    /// Whether this probe needs the run to itself. See [`ProbeSpec::exclusive`].
+    ///
+    /// `false` is right for anything whose evidence is the content of a reply.
+    /// Say `true` only if the measurement is a clock reading, or if the probe
+    /// reads shared state that a step running beside it could still be writing.
+    fn exclusive(&self) -> bool {
+        false
+    }
     fn run<'a>(&'a self, ctx: &'a Ctx) -> ProbeFuture<'a>;
 }
 
@@ -280,47 +330,91 @@ macro_rules! many {
 /// results are unreliable and the verdict layer needs to know that before it
 /// reads them. Perf and channel last, because both read what every earlier step
 /// observed rather than issuing much of their own.
+///
+/// The identity family is seven steps rather than one. It was one until 0.5.0,
+/// and the cost of that was invisible until somebody wanted a cheaper run: the
+/// unit of selection was the whole family, so a caller who wanted the model's
+/// self-report and its capability profile had to buy four steps of self-reported
+/// trivia along with them — and, because a step is also the unit of scheduling,
+/// had to run all twelve requests one after another. Splitting them changes
+/// nothing about what any of them asks.
 pub fn registry() -> Vec<ProbeSpec> {
+    use Group::{Consistency, Contract, Identity, Perf, Stream};
     use Subject::{Endpoint, Model};
-    let spec = |id, subject, results, run| ProbeSpec {
+    let spec = |id, group, subject, results, run| ProbeSpec {
         id,
+        group,
         subject,
         results,
         always: false,
+        exclusive: false,
         run,
     };
     vec![
         ProbeSpec {
             id: "preflight",
+            group: Contract,
             subject: Endpoint,
             results: 1,
             always: true,
+            // Nothing may run beside it, because nothing may run *before* its
+            // answer: every later step is conditional on the endpoint being
+            // there at all.
+            exclusive: true,
             run: one!(contract::preflight),
         },
-        spec("model_catalog", Endpoint, 1, one!(contract::model_catalog)),
+        spec(
+            "model_catalog",
+            Contract,
+            Endpoint,
+            1,
+            one!(contract::model_catalog),
+        ),
         spec(
             "response_schema",
+            Contract,
             Endpoint,
             1,
             one!(contract::response_schema),
         ),
-        spec("model_echo", Endpoint, 1, one!(contract::model_echo)),
+        spec(
+            "model_echo",
+            Contract,
+            Endpoint,
+            1,
+            one!(contract::model_echo),
+        ),
         spec(
             "missing_version",
+            Contract,
             Endpoint,
             1,
             one!(contract::missing_version),
         ),
-        spec("missing_auth", Endpoint, 1, one!(contract::missing_auth)),
-        spec("invalid_model", Endpoint, 1, one!(contract::invalid_model)),
+        spec(
+            "missing_auth",
+            Contract,
+            Endpoint,
+            1,
+            one!(contract::missing_auth),
+        ),
+        spec(
+            "invalid_model",
+            Contract,
+            Endpoint,
+            1,
+            one!(contract::invalid_model),
+        ),
         spec(
             "error_envelope",
+            Contract,
             Endpoint,
             1,
             one!(contract::error_envelope),
         ),
         spec(
             "stop_reason_enum",
+            Contract,
             Endpoint,
             1,
             one!(contract::stop_reason_enum),
@@ -330,44 +424,130 @@ pub fn registry() -> Vec<ProbeSpec> {
         // and it is the model that honours or ignores it.
         spec(
             "max_tokens_truncation",
+            Contract,
             Model,
             1,
             one!(contract::max_tokens_truncation),
         ),
-        spec("stop_sequence", Model, 1, one!(contract::stop_sequence)),
+        spec(
+            "stop_sequence",
+            Contract,
+            Model,
+            1,
+            one!(contract::stop_sequence),
+        ),
         spec(
             "system_adherence",
+            Contract,
             Model,
             1,
             one!(contract::system_adherence),
         ),
-        spec("sse_format", Endpoint, 1, one!(stream::sse_format)),
+        spec("sse_format", Stream, Endpoint, 1, one!(stream::sse_format)),
         spec(
             "stream_not_empty",
+            Stream,
             Endpoint,
             1,
             one!(stream::stream_not_empty),
         ),
-        spec("stream_usage", Endpoint, 1, one!(stream::stream_usage)),
+        spec(
+            "stream_usage",
+            Stream,
+            Endpoint,
+            1,
+            one!(stream::stream_usage),
+        ),
         // Every billing signal is read out of the `usage` block the endpoint
         // reports. Behind a relay that block is the relay's accounting.
-        spec("billing", Endpoint, 7, many!(billing::run)),
-        spec("identity", Model, 8, many!(identity::run)),
+        spec("billing", Group::Billing, Endpoint, 7, many!(billing::run)),
+        // ── identity ───────────────────────────────────────────────────────
+        // What it says it is. One request, and the only one of these that can
+        // reach a family verdict on its own.
+        spec("self_id", Identity, Model, 1, one!(identity::self_id)),
+        // A second, differently-phrased ask, purely to corroborate `self_id`.
+        spec(
+            "meta_creator",
+            Identity,
+            Model,
+            1,
+            one!(identity::meta_creator),
+        ),
+        // Self-reported context window and cutoff. Both are fingerprints — the
+        // answers are strikingly consistent within a checkpoint — and neither
+        // is scored: they describe, they do not judge.
+        spec(
+            "context_claim",
+            Identity,
+            Model,
+            1,
+            one!(identity::context_claim),
+        ),
+        spec(
+            "cutoff_claim",
+            Identity,
+            Model,
+            1,
+            one!(identity::cutoff_claim),
+        ),
+        // Four requests, and the most expensive thing in the family that is not
+        // the battery. Cross-checks demonstrated knowledge against the model's
+        // own claimed cutoff.
+        spec(
+            "world_knowledge",
+            Identity,
+            Model,
+            1,
+            one!(identity::world_knowledge),
+        ),
+        // The battery and the tier it implies stay one step: the estimate is a
+        // reading of the battery's own result, and a caller who took one without
+        // the other would get a tier fitted to no measurements.
+        spec(
+            "capability",
+            Identity,
+            Model,
+            2,
+            many!(identity::capability),
+        ),
+        spec("verbosity", Identity, Model, 1, one!(identity::verbosity)),
+        // ── consistency ────────────────────────────────────────────────────
         spec(
             "signature_drift",
+            Consistency,
             Model,
             1,
             one!(consistency::signature_drift),
         ),
-        spec("cache_replay", Model, 1, one!(consistency::cache_replay)),
+        spec(
+            "cache_replay",
+            Consistency,
+            Model,
+            1,
+            one!(consistency::cache_replay),
+        ),
         spec(
             "request_id_unique",
+            Consistency,
             Endpoint,
             1,
             one!(consistency::request_id_unique),
         ),
-        spec("perf", Model, 4, many!(perf::run)),
-        spec("channel", Endpoint, 3, many!(channel::run)),
+        ProbeSpec {
+            id: "perf",
+            group: Perf,
+            subject: Model,
+            results: 4,
+            always: false,
+            // The one step whose measurement is a clock reading. Anything else
+            // in flight is load this run put there itself, and a latency figure
+            // that includes our own queueing describes the run rather than the
+            // endpoint — then travels on into whatever the caller does with
+            // `PerfSummary`.
+            exclusive: true,
+            run: many!(perf::run),
+        },
+        spec("channel", Group::Channel, Endpoint, 3, many!(channel::run)),
     ]
 }
 
@@ -379,7 +559,17 @@ pub struct Selection {
     /// Step ids to keep. Empty means all of them; applied after `subjects`.
     pub only: Vec<String>,
     /// Step ids to drop, applied last and winning over both fields above.
+    ///
+    /// Drops caller-supplied probes as well as built-in ones, so a custom probe
+    /// found to be misbehaving can be turned off by id without a deploy. That
+    /// is why replacing a built-in step with a custom one of the same id is
+    /// [`replacing`](Self::replacing) rather than a `skip` plus a `with`.
     pub skip: Vec<String>,
+    /// Built-in step ids a caller-supplied probe is standing in for.
+    ///
+    /// Unlike `skip` this applies to the registry only, which is the whole
+    /// point: the replacement is allowed to answer to the id it replaced.
+    pub replaced: Vec<String>,
     /// Caller-supplied probes, appended after the built-in steps. See [`Probe`].
     ///
     /// Not filtered by `subjects`/`only`/`skip`: the caller assembled this list
@@ -395,6 +585,7 @@ impl std::fmt::Debug for Selection {
             .field("subjects", &self.subjects)
             .field("only", &self.only)
             .field("skip", &self.skip)
+            .field("replaced", &self.replaced)
             .field(
                 "extra",
                 &self.extra.iter().map(|p| p.id()).collect::<Vec<_>>(),
@@ -417,23 +608,165 @@ impl Selection {
         }
     }
 
+    /// The smallest set that still supports a verdict about the model.
+    ///
+    /// [`model_only`](Self::model_only) with the redundant and the merely
+    /// descriptive taken out. Nine requests at [`Depth::Fast`] against
+    /// twenty-one, and — because the identity family is no longer one
+    /// indivisible step — a shape the scheduler can actually overlap.
+    ///
+    /// # What it keeps, and why those
+    ///
+    /// * `preflight` — without it nothing else means anything.
+    /// * `self_id` — the family check. This is the one that catches a lane sold
+    ///   as one vendor's model and served by another's, which is the cheat that
+    ///   does not need to be subtle.
+    /// * `capability` — graded questions generated per run, and the only thing
+    ///   here that a downgrade cannot answer its way around.
+    /// * `verbosity` and `perf` — how much it writes and how fast it generates.
+    ///   Weak on their own and the two most useful axes there are for anyone
+    ///   comparing one endpoint against many others serving the same model.
+    /// * `cache_replay` — a hard gate, and it catches being charged for
+    ///   inference that never ran.
+    ///
+    /// # What it drops, and what that costs
+    ///
+    /// `meta_creator` only ever corroborated `self_id`; `context_claim` and
+    /// `cutoff_claim` are unscored description; `signature_drift` looks for
+    /// fan-out across backends, which behind a relay describes the relay.
+    /// `world_knowledge` is four requests, asks for the cutoff a second time,
+    /// and measures the training corpus — a cheap model with a large corpus
+    /// passes it and an expensive one having a bad day fails it.
+    ///
+    /// The real loss is the three contract steps that survive a relay
+    /// (`max_tokens_truncation`, `stop_sequence`, `system_adherence`). Each is
+    /// one short request and each is a *strong* reverse-channel signal: they are
+    /// how a reconstructed endpoint, one that forwards a prompt to a web session
+    /// and cannot honour an API parameter it never received, gives itself away.
+    /// A caller who has not otherwise established what is on the far end should
+    /// add them back:
+    ///
+    /// ```
+    /// # use llm_verify::probes::Selection;
+    /// let sel = Selection::turbo().plus(["max_tokens_truncation", "stop_sequence", "system_adherence"]);
+    /// ```
+    ///
+    /// # Replacing the battery rather than paying for two
+    ///
+    /// A caller with a private bank of graded questions — the published ones
+    /// are readable by the endpoint being probed, which is the ceiling on what
+    /// they can prove — should spend the budget there instead of on both:
+    ///
+    /// ```
+    /// # use llm_verify::probes::Selection;
+    /// # fn demo(bank: std::sync::Arc<dyn llm_verify::probes::Probe>) {
+    /// let sel = Selection::turbo().replacing("capability", bank);
+    /// # }
+    /// ```
+    ///
+    /// [`replacing`](Self::replacing) rather than `minus` then `with` — the
+    /// latter reads correctly and silently drops both, for the reason spelled
+    /// out there.
+    ///
+    /// Three of turbo's nine requests are the battery, so that trades them for
+    /// however many the bank asks. The private probe is then responsible for
+    /// emitting a `capability` result and a `tier_estimate` one, or the identity
+    /// view has no capability measurement to read — see
+    /// [`identity::tier_result`](crate::probes::identity::tier_result), which is
+    /// public so that the thresholds stay in one place.
+    pub fn turbo() -> Self {
+        Selection {
+            only: ["self_id", "capability", "verbosity", "cache_replay", "perf"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Add steps to an `only` list. Ids or group keys, as [`Selection::only`].
+    ///
+    /// A no-op on a selection that has no `only` list, because that one already
+    /// includes everything — adding to it could only ever narrow it, which is
+    /// the opposite of what the name says.
+    pub fn plus<I, S>(mut self, ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        if !self.only.is_empty() {
+            self.only
+                .extend(ids.into_iter().map(|s| s.as_ref().to_string()));
+        }
+        self
+    }
+
+    /// Drop steps. Ids or group keys, as [`Selection::skip`].
+    ///
+    /// Works on any selection, unlike [`plus`](Self::plus): removing is
+    /// unambiguous whether or not there is an `only` list to remove from.
+    pub fn minus<I, S>(mut self, ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.skip
+            .extend(ids.into_iter().map(|s| s.as_ref().to_string()));
+        self
+    }
+
     /// Append a caller-supplied probe.
     pub fn with(mut self, p: std::sync::Arc<dyn Probe>) -> Self {
         self.extra.push(p);
         self
     }
 
+    /// Drop a built-in step and install a caller's probe in its place.
+    ///
+    /// # Why this is one call
+    ///
+    /// The obvious spelling — `.minus(["capability"]).with(bank)` — is wrong in
+    /// a way that reports success. [`skip`](Self::skip) applies to custom
+    /// probes too, deliberately, so that a misbehaving one can be switched off
+    /// by id; and a probe standing in for a built-in step naturally carries
+    /// that step's id, because carrying it is what makes everything downstream
+    /// keep working. So the skip removes both, the run comes back with the step
+    /// simply absent, and nothing anywhere says so. The verdict still
+    /// assembles, the report still renders, and the graded questions the whole
+    /// exercise existed to ask were never sent.
+    ///
+    /// Found by counting requests against a stub, which is the only way it
+    /// could have been found.
+    pub fn replacing(mut self, id: &str, p: std::sync::Arc<dyn Probe>) -> Self {
+        self.replaced.push(id.to_string());
+        self.extra.push(p);
+        self
+    }
+
+    /// Whether a name in `only`/`skip` addresses this step — by its own id, or
+    /// by the key of the group it belongs to.
+    ///
+    /// Group matching is what keeps `skip: ["identity"]` meaning what it meant
+    /// before 0.5.0 split that step into seven. It is also the more useful thing
+    /// to write: a caller who wants "no identity probing" wants the family, not
+    /// a list they have to keep in step with each release.
+    fn names(spec: &ProbeSpec, pattern: &str) -> bool {
+        pattern == spec.id || pattern == spec.group.key()
+    }
+
     fn keeps(&self, spec: &ProbeSpec) -> bool {
         if spec.always {
             return true;
         }
-        if self.skip.iter().any(|s| s == spec.id) {
+        if self.skip.iter().any(|s| Self::names(spec, s))
+            || self.replaced.iter().any(|s| Self::names(spec, s))
+        {
             return false;
         }
         if !self.subjects.is_empty() && !self.subjects.contains(&spec.subject) {
             return false;
         }
-        if !self.only.is_empty() && !self.only.iter().any(|s| s == spec.id) {
+        if !self.only.is_empty() && !self.only.iter().any(|s| Self::names(spec, s)) {
             return false;
         }
         true
@@ -561,7 +894,54 @@ pub async fn run_paced(
     pace: Option<Pace>,
     on_event: &mut (dyn FnMut(Event<'_>) + Send),
 ) -> Vec<ProbeResult> {
-    run_with_extra(ctx, specs, &[], cancel, pace, on_event).await
+    run_with_extra(ctx, specs, &[], cancel, Schedule::paced(pace), on_event).await
+}
+
+/// When the steps run relative to one another.
+///
+/// The two fields are mutually exclusive in practice and the constructors say
+/// so, because they exist for opposite reasons. [`Pace`] spreads a run out to
+/// make it hard to recognise; overlapping compresses it into the smallest burst
+/// the endpoint will tolerate. A caller who asked for both would be asking to be
+/// unobtrusive quickly.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Schedule {
+    pub pace: Option<Pace>,
+    /// Steps that may be in flight at once. `0` and `1` both mean sequential.
+    ///
+    /// This is a *step* count, and steps are uneven — the capability battery is
+    /// a dozen requests and `stop_sequence` is one — so it does not bound how
+    /// much traffic reaches the endpoint. That bound is
+    /// [`Client::with_limit`](crate::client::Client::with_limit), and a caller
+    /// probing an endpoint it does not own wants both.
+    pub concurrency: usize,
+}
+
+impl Schedule {
+    /// One step at a time, in registry order. What every release before 0.5.0
+    /// did, and still the default.
+    pub fn sequential() -> Self {
+        Schedule::default()
+    }
+
+    pub fn paced(pace: Option<Pace>) -> Self {
+        Schedule {
+            pace,
+            concurrency: 0,
+        }
+    }
+
+    /// Overlap up to `n` steps. Ignored while a [`Pace`] is set.
+    pub fn concurrent(n: usize) -> Self {
+        Schedule {
+            pace: None,
+            concurrency: n,
+        }
+    }
+
+    fn overlaps(&self) -> bool {
+        self.pace.is_none() && self.concurrency > 1
+    }
 }
 
 /// One step, whether it came from the registry or from the caller.
@@ -588,6 +968,12 @@ impl Step<'_> {
             Step::Custom(p) => p.results(),
         }
     }
+    fn exclusive(&self) -> bool {
+        match self {
+            Step::Built(s) => s.exclusive,
+            Step::Custom(p) => p.exclusive(),
+        }
+    }
     fn run<'a>(&'a self, ctx: &'a Ctx) -> ProbeFuture<'a> {
         match self {
             Step::Built(s) => (s.run)(ctx),
@@ -602,7 +988,7 @@ pub async fn run_with_extra(
     specs: &[ProbeSpec],
     extra: &[std::sync::Arc<dyn Probe>],
     cancel: &Cancel,
-    pace: Option<Pace>,
+    schedule: Schedule,
     on_event: &mut (dyn FnMut(Event<'_>) + Send),
 ) -> Vec<ProbeResult> {
     let steps: Vec<Step<'_>> = specs
@@ -610,32 +996,91 @@ pub async fn run_with_extra(
         .map(Step::Built)
         .chain(extra.iter().map(Step::Custom))
         .collect();
-    run_steps(ctx, &steps, cancel, pace, on_event).await
+    run_steps(ctx, &steps, cancel, schedule, on_event).await
 }
 
+/// Run the steps, one at a time or several at once.
+///
+/// # The two schedules
+///
+/// Sequential is what every release before 0.5.0 did and is still the default,
+/// because it is the only one that can be paced and the only one under which a
+/// [`Perf`](Group::Perf) reading means anything without further care.
+///
+/// Overlapping exists for the run somebody is *waiting on* — a marketplace
+/// admitting a listing while a seller watches a progress dialog, where thirty
+/// sequential round trips to a model that thinks before it answers is minutes.
+/// Two things make it safe to do without changing any probe's answer:
+///
+/// * **Exclusive steps.** [`ProbeSpec::exclusive`] marks a step that must have
+///   the run to itself. `preflight` is one because everything after it is
+///   conditional on its answer; `perf` is one because its measurement is a
+///   clock, and a latency figure taken while this run had three other requests
+///   in the air describes the run rather than the endpoint. Registry order is
+///   preserved across them: consecutive non-exclusive steps overlap with each
+///   other and with nothing on the far side of an exclusive one.
+/// * **Per-step generators.** See [`Ctx::rng_for`]. Draw order no longer
+///   depends on scheduling, so a seed reproduces a run either way.
+///
+/// What does change is [`Event`] timing: a step announces `Started` when it is
+/// admitted to the window rather than when the one before it finished, so
+/// several may be outstanding at once and their `Finished` events interleave. A
+/// display that tracks "the current step" should expect to hold more than one.
+/// `done`/`total` still advance monotonically, and results are re-ordered into
+/// registry order before returning, so nothing reading the report can tell.
 async fn run_steps(
     ctx: &Ctx,
     specs: &[Step<'_>],
     cancel: &Cancel,
-    pace: Option<Pace>,
+    schedule: Schedule,
     on_event: &mut (dyn FnMut(Event<'_>) + Send),
 ) -> Vec<ProbeResult> {
     let total: usize = specs.iter().map(|s| s.results()).sum();
-    let mut out: Vec<ProbeResult> = Vec::new();
+    // Indexed by position in `specs`, so an overlapping wave can be flattened
+    // back into registry order however its steps finished.
+    let mut collected: Vec<Vec<ProbeResult>> = vec![Vec::new(); specs.len()];
+    let mut done = 0usize;
     let mut first = true;
-    for spec in specs {
+    let mut i = 0usize;
+
+    while i < specs.len() {
         if cancel.is_cancelled() {
             break;
         }
-        // Before the step, never after the last one: a run that ended minutes
+        // How many steps start together.
+        //
+        // A rolling window rather than fixed batches, and the difference is not
+        // academic: batching in groups of `concurrency` makes every group wait
+        // for its own slowest member before the next one starts, so a run whose
+        // steps are uneven — and they are, one of them is a whole battery —
+        // spends most of its time with idle permits. Taking every consecutive
+        // non-exclusive step instead lets a step that finishes early free its
+        // permit for one further down the list. What bounds the actual traffic
+        // is the client's permit pool, not this number.
+        let wave = if schedule.overlaps() && !specs[i].exclusive() {
+            specs[i..]
+                .iter()
+                .take_while(|s| !s.exclusive())
+                .count()
+                .max(1)
+        } else {
+            1
+        };
+
+        // Before the wave, never after the last one: a run that ended minutes
         // ago but has not returned is a run whose caller thinks it is still
         // going.
-        if let (false, Some(p)) = (first, pace) {
+        if let (false, Some(p)) = (first, schedule.pace) {
             let span = p.max.saturating_sub(p.min);
             let jitter = if span.is_zero() {
                 std::time::Duration::ZERO
             } else {
-                let r = ctx.rng.lock().unwrap().next_u64();
+                // Drawn from a stream of its own so that pacing — which is a
+                // decision about *when*, made by the caller — cannot shift the
+                // payloads any probe asks. Before 0.5.0 it shared the run's one
+                // generator, so the same seed produced different questions
+                // depending on whether the run was paced.
+                let r = ctx.rng_for("__pace").next_u64();
                 std::time::Duration::from_millis(r % (span.as_millis() as u64).max(1))
             };
             let wait = p.min + jitter;
@@ -647,26 +1092,53 @@ async fn run_steps(
             }
         }
         first = false;
-        on_event(Event::Started {
-            id: spec.id(),
-            done: out.len(),
-            total,
-        });
-        for r in spec.run(ctx).await {
-            out.push(r);
-            let done = out.len();
-            on_event(Event::Finished {
-                result: out.last().unwrap(),
-                done,
-                total,
-            });
+
+        // Nothing is spawned: the futures borrow `ctx` and are polled together
+        // on this task. A step is admitted as soon as a slot frees rather than
+        // when the whole group finishes, so a short step behind a long one does
+        // not wait for it.
+        use futures_util::StreamExt;
+        let end = i + wave;
+        let cap = if wave == 1 {
+            1
+        } else {
+            schedule.concurrency.max(1)
+        };
+        let mut running = futures_util::stream::FuturesUnordered::new();
+        let mut next = i;
+        loop {
+            while next < end && running.len() < cap {
+                let at = next;
+                on_event(Event::Started {
+                    id: specs[at].id(),
+                    done,
+                    total,
+                });
+                running.push(async move { (at, specs[at].run(ctx).await) });
+                next += 1;
+            }
+            let Some((at, results)) = running.next().await else {
+                break;
+            };
+            for r in results {
+                collected[at].push(r);
+                done += 1;
+                on_event(Event::Finished {
+                    result: collected[at].last().unwrap(),
+                    done,
+                    total,
+                });
+            }
         }
+
         // Everything downstream would just report the same connection failure.
         if !ctx.is_reachable() {
             break;
         }
+        i += wave;
     }
-    out
+
+    collected.into_iter().flatten().collect()
 }
 
 /// Upper bound on results from the full suite. Derived, so adding a step cannot
@@ -698,6 +1170,73 @@ mod tests {
         };
         // 100 tokens over the 2s of actual generation, not the full 3s.
         assert_eq!(s.tps(), Some(50.0));
+    }
+
+    /// The two steps that cannot share a run, and the reason each cannot.
+    ///
+    /// `perf` is the one that would fail quietly. Overlap it and its numbers
+    /// come out worse the more concurrency the caller asked for — and those
+    /// numbers do not stay in the report, they go on to
+    /// `PerfSummary::tps_mean`/`ttft_p50`, which anyone comparing endpoints
+    /// against a population reads as a property of the model.
+    #[test]
+    fn the_clock_reading_and_the_gate_run_alone() {
+        let exclusive: Vec<&str> = registry()
+            .iter()
+            .filter(|s| s.exclusive)
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(exclusive, vec!["preflight", "perf"]);
+    }
+
+    /// Whatever else concurrency changed, it must not have changed what a seed
+    /// asks. The report records the seed so a seller can be shown the questions
+    /// they were scored on; if scheduling could move them, that record is a
+    /// fiction.
+    #[test]
+    fn a_step_s_questions_depend_on_the_seed_and_its_own_id_only() {
+        let ctx = |seed| {
+            Ctx::with_seed(
+                Client::with_http(crate::client::Endpoint::default(), reqwest::Client::new()),
+                Depth::Fast,
+                Lang::En,
+                "m".into(),
+                seed,
+            )
+        };
+        let a = ctx(0xC0FFEE);
+        let b = ctx(0xC0FFEE);
+        // Same seed, same step: identical, and drawing for some other step in
+        // between cannot disturb it — which is exactly what a shared generator
+        // could not promise once the steps stopped running in a fixed order.
+        let first = a.rng_for("capability").hex(8);
+        let _ = a.rng_for("cache_replay").hex(8);
+        let _ = a.rng_for("stop_sequence").hex(8);
+        assert_eq!(a.rng_for("capability").hex(8), first);
+        assert_eq!(b.rng_for("capability").hex(8), first);
+
+        // Two steps never share a stream, or one of them asking a question
+        // fewer would shift every question after it.
+        assert_ne!(a.rng_for("cache_replay").hex(8), first);
+        // And a different run asks differently.
+        assert_ne!(ctx(0xC0FFEF).rng_for("capability").hex(8), first);
+    }
+
+    #[test]
+    fn a_schedule_overlaps_only_when_it_can() {
+        assert!(!Schedule::sequential().overlaps());
+        assert!(!Schedule::concurrent(1).overlaps());
+        assert!(Schedule::concurrent(4).overlaps());
+        // Pacing wins. Spreading a run out to be hard to spot and compressing
+        // it into the smallest possible burst cannot both be had.
+        let paced = Schedule {
+            pace: Some(Pace {
+                min: std::time::Duration::from_secs(20),
+                max: std::time::Duration::from_secs(180),
+            }),
+            concurrency: 8,
+        };
+        assert!(!paced.overlaps());
     }
 
     #[test]

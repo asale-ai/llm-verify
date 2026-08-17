@@ -126,7 +126,7 @@ pub async fn cache_replay(ctx: &Ctx) -> ProbeResult {
 
     // Temperature 1 with an open-ended prompt: identical text across runs is
     // not something a model does, but a cache does it every time.
-    let nonce = ctx.rng.lock().unwrap().hex(6);
+    let nonce = ctx.rng_for("cache_replay").hex(6);
     let req = ChatRequest::new(
         &ctx.client.endpoint.model,
         &format!(

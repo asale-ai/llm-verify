@@ -12,7 +12,6 @@ use crate::client::{Client, Endpoint};
 use crate::i18n::Lang;
 use crate::probes::{self, Cancel, Ctx, Depth, Event, Pace, Selection};
 use crate::report::Report;
-use crate::util::Rng;
 use crate::verdict;
 use anyhow::Result;
 
@@ -33,6 +32,12 @@ pub struct RunConfig {
     pub http: Option<reqwest::Client>,
     /// Spread the run out instead of issuing it as a burst. See [`Pace`].
     pub pace: Option<Pace>,
+    /// Overlap the steps instead of running them one at a time. See
+    /// [`RunConfig::concurrency`].
+    pub concurrency: usize,
+    /// Requests this run may have in flight at once, whatever the schedule.
+    /// See [`RunConfig::max_in_flight`].
+    pub max_in_flight: usize,
 }
 
 impl RunConfig {
@@ -46,12 +51,62 @@ impl RunConfig {
             seed: None,
             http: None,
             pace: None,
+            concurrency: 1,
+            max_in_flight: 0,
         }
     }
 
     /// Probe only what survives a relay — see [`probes::Subject`].
     pub fn model_only(mut self) -> Self {
         self.selection = Selection::model_only();
+        self
+    }
+
+    /// The cheapest run that still supports a verdict about the model.
+    ///
+    /// [`Selection::turbo`] with the steps overlapped and the traffic capped.
+    /// Twelve requests at [`Depth::Fast`], in roughly four round trips instead
+    /// of twenty-one, which is the difference between a run somebody can watch
+    /// finish and one they give up on.
+    ///
+    /// `in_flight` is the only number here worth thinking about, and it is a
+    /// statement about the endpoint rather than about this crate: how many
+    /// simultaneous requests it will answer without queueing or refusing. Set
+    /// it too high and the run measures the endpoint's saturation instead of
+    /// its behaviour — and, on anything with a per-account concurrency budget,
+    /// spends that budget on being examined. When in doubt, three.
+    pub fn turbo(mut self, in_flight: usize) -> Self {
+        self.selection = Selection::turbo();
+        self.depth = Depth::Fast;
+        self.concurrency = in_flight.max(1);
+        self.max_in_flight = in_flight;
+        self
+    }
+
+    /// How many steps may be in flight at once. `1` is sequential, the default,
+    /// and what every release before 0.5.0 did.
+    ///
+    /// Ignored while a [`Pace`] is set: pacing exists to make a run hard to
+    /// pick out of ordinary traffic, and overlapping exists to compress it into
+    /// the smallest possible burst. A caller asking for both is asking to be
+    /// unobtrusive quickly, and pacing wins.
+    ///
+    /// Steps marked [`exclusive`](probes::ProbeSpec::exclusive) still run alone
+    /// — `preflight` because everything after it depends on its answer, `perf`
+    /// because a latency measurement taken alongside this run's own traffic
+    /// measures this run.
+    pub fn concurrency(mut self, n: usize) -> Self {
+        self.concurrency = n.max(1);
+        self
+    }
+
+    /// Cap the requests in flight, independently of how many steps are.
+    ///
+    /// Steps are uneven — the capability battery is a dozen requests and
+    /// `stop_sequence` is one — so a step count does not bound what the
+    /// endpoint sees. This does. `0` leaves it uncapped.
+    pub fn max_in_flight(mut self, n: usize) -> Self {
+        self.max_in_flight = n;
         self
     }
 
@@ -116,13 +171,8 @@ pub async fn run(
         Some(http) => Client::with_http(cfg.endpoint.clone(), http),
         None => Client::new(cfg.endpoint.clone())?,
     };
-    let ctx = Ctx::with_rng(
-        client,
-        cfg.depth,
-        cfg.lang,
-        claimed_model.clone(),
-        Rng::from_seed(seed),
-    );
+    let client = client.with_limit(cfg.max_in_flight);
+    let ctx = Ctx::with_seed(client, cfg.depth, cfg.lang, claimed_model.clone(), seed);
 
     let specs = cfg.selection.resolve();
     // Custom probes are named here alongside the built-in steps. A report that
@@ -140,7 +190,11 @@ pub async fn run(
         )
         .collect();
     let extra = cfg.selection.resolve_extra();
-    let results = probes::run_with_extra(&ctx, &specs, &extra, cancel, cfg.pace, on_event).await;
+    let schedule = probes::Schedule {
+        pace: cfg.pace,
+        concurrency: cfg.concurrency,
+    };
+    let results = probes::run_with_extra(&ctx, &specs, &extra, cancel, schedule, on_event).await;
 
     let l = cfg.lang;
     let identity = verdict::build_identity(&results, &claimed_model, l);
@@ -207,15 +261,19 @@ mod tests {
         assert_send(run(cfg, &cancel, &mut sink));
     }
 
+    fn ids(sel: Selection) -> Vec<&'static str> {
+        sel.resolve().iter().map(|s| s.id).collect()
+    }
+
     #[test]
     fn model_only_drops_endpoint_steps_but_keeps_preflight() {
-        let specs = Selection::model_only().resolve();
-        let ids: Vec<&str> = specs.iter().map(|s| s.id).collect();
+        let ids = ids(Selection::model_only());
         assert!(
             ids.contains(&"preflight"),
             "the run is meaningless without it"
         );
-        assert!(ids.contains(&"identity"));
+        assert!(ids.contains(&"self_id"));
+        assert!(ids.contains(&"capability"));
         assert!(ids.contains(&"perf"));
         // These read the endpoint's own contract and accounting, which behind a
         // relay belong to the relay.
@@ -231,8 +289,84 @@ mod tests {
             skip: vec!["perf".into()],
             ..Default::default()
         };
-        let ids: Vec<&str> = sel.resolve().iter().map(|s| s.id).collect();
-        assert!(ids.contains(&"identity"));
+        let ids = ids(sel);
+        assert!(ids.contains(&"self_id"));
         assert!(!ids.contains(&"perf"));
+    }
+
+    /// Splitting the identity step into seven must not have taken away the way
+    /// callers already addressed it. `skip: ["identity"]` meant "no identity
+    /// probing" before 0.5.0 and has to keep meaning that, because the
+    /// alternative is every existing caller silently starting to run steps they
+    /// had turned off.
+    #[test]
+    fn a_group_key_still_addresses_the_whole_family() {
+        let without = ids(Selection {
+            skip: vec!["identity".into()],
+            ..Default::default()
+        });
+        for gone in ["self_id", "meta_creator", "world_knowledge", "capability"] {
+            assert!(!without.contains(&gone), "{gone} survived skip: [identity]");
+        }
+        assert!(without.contains(&"preflight"));
+
+        let only_identity = ids(Selection {
+            only: vec!["identity".into()],
+            ..Default::default()
+        });
+        assert!(only_identity.contains(&"self_id") && only_identity.contains(&"verbosity"));
+        assert!(!only_identity.contains(&"cache_replay"));
+    }
+
+    #[test]
+    fn turbo_keeps_every_probe_a_verdict_rests_on() {
+        let kept_ids = ids(Selection::turbo());
+        // The family gate, the capability measurement and the tier it implies,
+        // the two population axes, and the one hard gate that survives a relay.
+        for kept in [
+            "preflight",
+            "self_id",
+            "capability",
+            "verbosity",
+            "perf",
+            "cache_replay",
+        ] {
+            assert!(kept_ids.contains(&kept), "turbo dropped {kept}");
+        }
+        // Corroboration, description and a fan-out check that describes the
+        // relay rather than the model.
+        for dropped in [
+            "meta_creator",
+            "context_claim",
+            "cutoff_claim",
+            "world_knowledge",
+            "signature_drift",
+        ] {
+            assert!(!kept_ids.contains(&dropped), "turbo kept {dropped}");
+        }
+        // And nothing whose subject is the endpoint, which turbo inherits from
+        // being a strict subset of `model_only`.
+        let relayed = ids(Selection::model_only());
+        for id in &kept_ids {
+            assert!(relayed.contains(id), "{id} is not in model_only");
+        }
+    }
+
+    #[test]
+    fn plus_puts_the_endpoint_contract_checks_back() {
+        let ids = ids(Selection::turbo().plus(["stop_sequence", "system_adherence"]));
+        assert!(ids.contains(&"stop_sequence"));
+        assert!(ids.contains(&"system_adherence"));
+        assert!(ids.contains(&"self_id"), "and keeps what turbo had");
+    }
+
+    /// `plus` on a selection with no `only` list must not narrow it. An empty
+    /// `only` means "everything", so extending it would turn a full run into a
+    /// two-step one — the exact opposite of what the name promises.
+    #[test]
+    fn plus_on_an_unfiltered_selection_is_a_no_op() {
+        let before = ids(Selection::all()).len();
+        let after = ids(Selection::all().plus(["self_id"])).len();
+        assert_eq!(before, after);
     }
 }

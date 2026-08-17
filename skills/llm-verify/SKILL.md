@@ -42,6 +42,8 @@ llm-verify --base-url <URL> --api-key <KEY> --model <MODEL_ID>
 |---|---|
 | `--protocol anthropic\|openai` | Inferred from the URL and model name if omitted |
 | `--depth fast\|balanced\|forensic` | Default `balanced`; `forensic` samples more — slower and costlier, but firmer |
+| `--turbo` | Quickest run that still reaches a verdict: 9 requests instead of 21, overlapped. Drops the corroborating identity probes and the reconstructed-endpoint contract checks |
+| `--concurrency N` | Requests in flight, default 1. Raise only against an endpoint you know answers that many at once; latency probes always run alone |
 | `--claimed-model <ID>` | Use when the vendor's advertised name differs from the ID you request |
 | `--lang en\|zh` | Report language; follows the system locale by default |
 | `-o report.html` | HTML report path |
