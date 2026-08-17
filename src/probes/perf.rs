@@ -23,6 +23,21 @@ const TPS_SMALL_FLOOR: f64 = 90.0;
 /// the endpoint is fanning out across more than one backend.
 const CV_UNSTABLE: f64 = 0.5;
 
+/// Reply ceiling for the timing sample.
+///
+/// It is a stop, not the measurement: the prompt below is what fixes the length
+/// at roughly eighty words, and throughput is computed from the tokens that
+/// actually came back. So the only thing this number decides is whether the
+/// sample gets truncated — and on a reasoning model it did. Thinking tokens
+/// count as output, and a short answer from a `gpt-5.6`-class model runs to
+/// several hundred of them before the first visible word, so a 200-token
+/// ceiling stopped the turn every single time: against a relay that enforces
+/// the cap this arrived as an error rather than a truncation, and the sample
+/// was lost. Sized to clear a reasoning preamble with room to spare; a model
+/// that does not think still stops at the eighty words it was asked for and
+/// never comes near it.
+const MAX_TOKENS: u32 = 1200;
+
 pub async fn run(ctx: &Ctx) -> Vec<ProbeResult> {
     sample(ctx).await;
     let samples = ctx.perf.lock().unwrap().clone();
@@ -44,7 +59,7 @@ async fn sample(ctx: &Ctx) {
             "Write a single paragraph of exactly 80 words about the ocean. \
              Plain prose, no lists, no preamble.",
         )
-        .max_tokens(200)
+        .max_tokens(MAX_TOKENS)
         .temperature(0.0);
 
         match ctx.client.stream(&req).await {
