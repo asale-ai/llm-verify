@@ -1,10 +1,25 @@
 # llm-verify
 
+**Verify the LLM endpoint you are actually using: model authenticity, billing inflation, relay provenance, performance and silent downgrades.**
+
+[![crates.io](https://img.shields.io/crates/v/llm-verify.svg)](https://crates.io/crates/llm-verify)
+[![Downloads](https://img.shields.io/crates/d/llm-verify.svg)](https://crates.io/crates/llm-verify)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#licence)
+
 **English** · [简体中文](README.zh-CN.md)
 
-Verify the LLM endpoint you are actually using: model authenticity, billing inflation, relay provenance, performance and silent downgrades.
+A single binary with no runtime dependencies. You point it at a base URL, a key and a model name; it probes the endpoint from the outside and writes an HTML report you open in a browser.
 
-A single binary with no runtime dependencies. Results come out as an HTML report you open in a browser.
+## Contents
+
+- [Install](#install)
+- [Use](#use)
+- [Reading the report](#reading-the-report)
+- [Use it from an AI coding tool](#use-it-from-an-ai-coding-tool)
+- [What it checks](#what-it-checks)
+- [Use it as a library](#use-it-as-a-library)
+- [Limits](#limits)
+- [Licence](#licence)
 
 ## Install
 

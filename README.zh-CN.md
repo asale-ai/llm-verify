@@ -1,10 +1,24 @@
 # llm-verify
 
+**检测你正在用的 LLM 端点：模型真假、计费掺水、中转来源、性能与降智。**
+
+[![crates.io](https://img.shields.io/crates/v/llm-verify.svg)](https://crates.io/crates/llm-verify)
+[![Downloads](https://img.shields.io/crates/d/llm-verify.svg)](https://crates.io/crates/llm-verify)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#许可)
+
 [English](README.md) · **简体中文**
 
-检测你正在用的 LLM 端点：模型真假、计费掺水、中转来源、性能与降智。
+单二进制，无运行时依赖。给它一个 base URL、一个 key 和一个模型名，它从外部把这个端点探一遍，输出一份可以直接用浏览器打开的 HTML 报告。
 
-单二进制，无运行时依赖。检测结果输出为一份可以直接用浏览器打开的 HTML 报告。
+## 目录
+
+- [安装](#安装)
+- [用法](#用法)
+- [报告怎么读](#报告怎么读)
+- [在 AI 编程工具里用](#在-ai-编程工具里用)
+- [能测什么](#能测什么)
+- [能力边界](#能力边界)
+- [许可](#许可)
 
 ## 安装
 
