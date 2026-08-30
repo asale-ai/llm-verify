@@ -39,6 +39,27 @@ struct Cli {
 enum Command {
     /// Verify an endpoint (the default command)
     Run(RunArgs),
+    /// List the probe suite and exit. Offline: contacts no endpoint and needs no key
+    Probes(ProbesArgs),
+}
+
+#[derive(clap::Args, Clone, Default)]
+struct ProbesArgs {
+    /// Listing language: en / zh. Defaults to the system locale, then English
+    #[arg(long)]
+    lang: Option<String>,
+
+    /// Disable coloured output
+    #[arg(long)]
+    no_color: bool,
+
+    /// Comma-separated probe ids or group names to list; everything else is hidden
+    #[arg(long, value_delimiter = ',')]
+    only: Vec<String>,
+
+    /// Comma-separated probe ids or group names to leave out of the listing
+    #[arg(long, value_delimiter = ',')]
+    skip: Vec<String>,
 }
 
 #[derive(clap::Args, Clone, Default)]
@@ -148,6 +169,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Run(args)) => run_blocking(args),
+        // No endpoint, no key, no network — so no async runtime either.
+        Some(Command::Probes(args)) => {
+            let lang = i18n::Lang::from_env(args.lang.as_deref());
+            let colour = !args.no_color && std::env::var("NO_COLOR").is_err();
+            term::probe_catalog(lang, colour, &args.only, &args.skip);
+            Ok(())
+        }
         None => run_blocking(cli.run),
     }
 }

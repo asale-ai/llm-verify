@@ -66,6 +66,20 @@ LLM_VERIFY_MODEL=claude-opus-4-5
 llm-verify
 ```
 
+### See the suite without spending anything
+
+`probes` prints every step, what it asks, and which group it belongs to. It
+contacts nothing and needs no key, so it is also the way to find the ids that
+`--only` and `--skip` accept:
+
+```bash
+llm-verify probes                              # all 28 steps, 40 results
+llm-verify probes --only identity,consistency  # just those groups
+llm-verify probes --lang zh
+```
+
+![terminal recording](.repolish/demo.svg)
+
 ### Example run
 
 Probing `gpt-5.6-sol` through OpenRouter at the default `balanced` depth — 40 probes, 47 requests, 131.2s:

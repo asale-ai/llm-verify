@@ -59,6 +59,19 @@ LLM_VERIFY_MODEL=claude-opus-4-5
 llm-verify
 ```
 
+### 不花钱先看清整套探针
+
+`probes` 会列出每一个步骤、它到底在问什么、属于哪一组。它不联网也不需要 key，
+所以也是查 `--only` / `--skip` 可用 id 的地方：
+
+```bash
+llm-verify probes                              # 全部 28 个步骤、40 项结果
+llm-verify probes --only identity,consistency  # 只看这两组
+llm-verify probes --lang zh
+```
+
+![终端录像](.repolish/demo.svg)
+
 ### 运行示例
 
 用默认的 `balanced` 深度经 OpenRouter 检测 `gpt-5.6-sol`——40 项探针，47 次请求，耗时 131.2s：

@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="910" height="574" viewBox="0 0 910 574" lang="en" role="img" aria-label="terminal recording: llm-verify probes --only identity,consistency">
+  <style>
+    .t { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", "Noto Sans Mono CJK JP", "Microsoft YaHei", "Hiragino Sans", "Yu Gothic", monospace; white-space: pre; }
+    svg {
+      --d: 10.255s;
+      --w0: 378.0px;
+      --wlast: 378.0px;
+    }
+    .s0 { animation: s0 var(--d) step-end infinite; }
+    @keyframes s0 { 0%,17.552% { opacity: 1 } 17.552%,17.552% { opacity: 0 } 17.552%,100% { opacity: 1 } }
+    .c0 { animation: c0 var(--d) infinite; }
+    @keyframes c0 {
+      0% { transform: translateX(var(--w0)); animation-timing-function: step-end }
+      17.552% { transform: translateX(0); animation-timing-function: steps(45, end) }
+      37.299%,100% { transform: translateX(var(--w0)) }
+    }
+    .o0 { animation: o0 var(--d) step-end infinite; }
+    @keyframes o0 { 0%,17.552% { opacity: 1 } 17.552%,43.637% { opacity: 0 } 43.637%,100% { opacity: 1 } }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important }
+      .step { opacity: 0 }
+      .last { opacity: 1 }
+      .cover { transform: translateX(var(--wlast)) }
+    }
+  </style>
+  <rect x="0" y="0" width="910" height="574" rx="10.0" fill="#1a1a24"/>
+  <rect x="0.5" y="0.5" width="909" height="573" rx="9.5" fill="none" stroke="#35334a"/>
+  <rect x="0" y="0" width="910" height="34" rx="10.0" fill="#222130"/>
+  <rect x="0" y="17" width="910" height="17" rx="0.0" fill="#222130"/>
+  <circle cx="20" cy="17" r="5" fill="#ff4f6e"/>
+  <circle cx="38" cy="17" r="5" fill="#ffc53d"/>
+  <circle cx="56" cy="17" r="5" fill="#43e5d0"/>
+  <text class="t" x="455" y="22" font-size="12" fill="#8b87a3" text-anchor="middle">llm-verify</text>
+  <g class="step s0 last">
+    <text class="t" x="18" y="66.0" font-size="14" xml:space="preserve"><tspan fill="#ff5fd1">$</tspan><tspan fill="#edebfa"> llm-verify probes --only identity,consistency</tspan></text>
+    <g class="cover c0"><rect x="34.8" y="52.0" width="890.4" height="21.0" fill="#1a1a24"/><rect x="34.8" y="54.0" width="8.4" height="17.0" fill="#ff5fd1" opacity="0.85"/></g>
+    <g class="o0">
+      <text class="t" x="18" y="115.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa" font-weight="700">llm-verify 0.5.1</tspan></text>
+      <text class="t" x="18" y="136.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#8b87a3">The suite, offline. Nothing on this page contacts an endpoint.</tspan></text>
+      <text class="t" x="18" y="178.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#edebfa" font-weight="700">Protocol contract</tspan><tspan fill="#edebfa">  </tspan><tspan fill="#8b87a3">Is this a genuine API channel?</tspan></text>
+      <text class="t" x="18" y="199.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5">*</tspan><tspan fill="#edebfa"> preflight         endpoint Can the endpoint be reached at all — every later step is conditional on …</tspan></text>
+      <text class="t" x="18" y="241.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#edebfa" font-weight="700">Model identity</tspan><tspan fill="#edebfa">  </tspan><tspan fill="#8b87a3">Is the model behind this the one that was sold?</tspan></text>
+      <text class="t" x="18" y="262.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5">*</tspan><tspan fill="#edebfa"> self_id           model    What the model says it is when asked directly</tspan></text>
+      <text class="t" x="18" y="283.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> meta_creator      model    Who it says built it</tspan></text>
+      <text class="t" x="18" y="304.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> context_claim     model    The context window it claims to have</tspan></text>
+      <text class="t" x="18" y="325.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> cutoff_claim      model    The training cutoff it claims</tspan></text>
+      <text class="t" x="18" y="346.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> world_knowledge   model    Cross-checks that claimed cutoff against events it should and should not…</tspan></text>
+      <text class="t" x="18" y="367.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5">*</tspan><tspan fill="#edebfa"> capability        model    A battery that places the model in a capability tier, then holds that ti…</tspan></text>
+      <text class="t" x="18" y="388.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5">*</tspan><tspan fill="#edebfa"> verbosity         model    How long an answer it gives unprompted — a stable per-checkpoint trait</tspan></text>
+      <text class="t" x="18" y="430.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#edebfa" font-weight="700">Cross-request consistency</tspan><tspan fill="#edebfa">  </tspan><tspan fill="#8b87a3">Does the endpoint behave the same way every time?</tspan></text>
+      <text class="t" x="18" y="451.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> signature_drift   model    Whether one fixed request keeps its signature across the whole run</tspan></text>
+      <text class="t" x="18" y="472.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5">*</tspan><tspan fill="#edebfa"> cache_replay      model    Identical text across runs at temperature 1 is not something a model doe…</tspan></text>
+      <text class="t" x="18" y="493.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  </tspan><tspan fill="#35b5a5"> </tspan><tspan fill="#edebfa"> request_id_unique endpoint Whether every response carries a distinct message id</tspan></text>
+      <text class="t" x="18" y="535.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  11 steps, 12 results.</tspan></text>
+      <text class="t" x="18" y="556.0" font-size="14" xml:space="preserve"><tspan fill="#edebfa">  --only and --skip take any id or group name above; * marks what --turbo keeps.</tspan></text>
+    </g>
+  </g>
+</svg>

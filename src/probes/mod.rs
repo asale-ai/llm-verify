@@ -551,6 +551,56 @@ pub fn registry() -> Vec<ProbeSpec> {
     ]
 }
 
+/// One line on what a registry step actually asks, for `llm-verify probes`.
+///
+/// A lookup rather than a [`ProbeSpec`] field: adding a step's description
+/// costs one match arm here instead of an edit at all twenty-eight
+/// construction sites, and the ids are already stable across releases.
+///
+/// The multi-result steps — `billing`, `channel`, `perf` — describe the whole
+/// family, because that is the unit a caller can select.
+pub fn blurb(id: &str, lang: Lang) -> &'static str {
+    match id {
+        // Protocol contract
+        "preflight" => ts!(lang, "Can the endpoint be reached at all — every later step is conditional on it", "端点是否可达，其余每一步都以它为前提"),
+        "model_catalog" => ts!(lang, "Does the model list actually contain the model being verified", "模型目录里到底有没有待验证的这个模型"),
+        "response_schema" => ts!(lang, "Does a normal answer carry every field the protocol requires", "正常响应是否带齐协议要求的字段"),
+        "model_echo" => ts!(lang, "Does the reply echo back the model that was asked for", "响应回显的 model 字段是不是请求的那个"),
+        "missing_version" => ts!(lang, "A request with no version header should be rejected", "缺版本头的请求应当被拒"),
+        "missing_auth" => ts!(lang, "A request with no credential should be rejected", "缺鉴权的请求应当被拒"),
+        "invalid_model" => ts!(lang, "A nonexistent model should hard-fail, not silently fall back to another", "无效模型名应当硬失败，而不是静默兜底到别的模型"),
+        "error_envelope" => ts!(lang, "Do errors come back in the protocol's own error shape", "错误是否按协议规定的错误对象返回"),
+        "stop_reason_enum" => ts!(lang, "Is stop_reason one of the values the protocol allows", "stop_reason 是否取协议允许的值"),
+        "max_tokens_truncation" => ts!(lang, "Does max_tokens truncate where the protocol says it should", "max_tokens 是否按协议语义截断"),
+        "stop_sequence" => ts!(lang, "Are stop_sequences honoured, or quietly ignored", "stop_sequences 是真的生效还是被无视"),
+        "system_adherence" => ts!(lang, "Does the system prompt reach the model at all", "system prompt 到底有没有送达模型"),
+        // Streaming
+        "sse_format" => ts!(lang, "Do the SSE events arrive in the order the protocol defines", "SSE 事件序列是否符合协议"),
+        "stream_not_empty" => ts!(lang, "Does the stream carry a body, or close empty", "流式响应是有正文，还是空着就关了"),
+        "stream_usage" => ts!(lang, "Does the stream report usage, and does it agree with the body", "流式是否上报 usage，与正文是否对得上"),
+        // Metering & billing
+        "billing" => ts!(lang, "Recounts the tokens independently and compares them against what was billed: hidden prompt, input and output inflation, third-party wrapper markers", "独立重算 token 并与计费比对：隐藏 prompt、输入输出膨胀、第三方壳标记"),
+        // Channel provenance
+        "channel" => ts!(lang, "Vendor header fingerprint, multi-hop forwarding, and the signature that says who is relaying", "官方响应头指纹、多跳转发、渠道签名"),
+        // Performance
+        "perf" => ts!(lang, "Time to first token, end-to-end latency, generation throughput and jitter", "首字延迟、端到端延迟、生成吞吐与抖动"),
+        // Model identity
+        "self_id" => ts!(lang, "What the model says it is when asked directly", "直接问它时，它自称是谁"),
+        "meta_creator" => ts!(lang, "Who it says built it", "它自述的创造者是谁"),
+        "context_claim" => ts!(lang, "The context window it claims to have", "它自述的上下文长度"),
+        "cutoff_claim" => ts!(lang, "The training cutoff it claims", "它自述的训练截止时间"),
+        "world_knowledge" => ts!(lang, "Cross-checks that claimed cutoff against events it should and should not know", "拿它该知道与不该知道的时事，反查那个自述的截止时间"),
+        "capability" => ts!(lang, "A battery that places the model in a capability tier, then holds that tier against the one claimed", "能力档位电池：反推它的档位，再与宣称的档位比对"),
+        "verbosity" => ts!(lang, "How long an answer it gives unprompted — a stable per-checkpoint trait", "无约束时的默认答复长度——每个检查点相当稳定的特征"),
+        // Cross-request consistency
+        "signature_drift" => ts!(lang, "Whether one fixed request keeps its signature across the whole run", "同一条固定请求，整轮下来签名是否漂移"),
+        "cache_replay" => ts!(lang, "Identical text across runs at temperature 1 is not something a model does — a cache does", "temperature 1 下逐字相同的回答不是模型行为，是缓存行为"),
+        "request_id_unique" => ts!(lang, "Whether every response carries a distinct message id", "每条响应的消息 ID 是否各不相同"),
+        _ => "",
+    }
+}
+
+
 /// Which steps to run.
 #[derive(Clone, Default)]
 pub struct Selection {
@@ -1263,5 +1313,22 @@ mod tests {
         let mut s = base.clone();
         s.latency_ms = 500;
         assert!(s.tps().is_none());
+    }
+
+    /// `blurb` falls through to "" for an unknown id, which would let a probe
+    /// added later show up in `llm-verify probes` as a bare id with no
+    /// explanation. Fail here instead, where the fix is one match arm.
+    #[test]
+    fn every_registry_step_has_a_blurb_in_both_languages() {
+        for spec in registry() {
+            for lang in [Lang::En, Lang::Zh] {
+                assert!(
+                    !blurb(spec.id, lang).is_empty(),
+                    "step `{}` has no {:?} blurb",
+                    spec.id,
+                    lang
+                );
+            }
+        }
     }
 }

@@ -7,7 +7,7 @@
 
 use llm_verify::client::Endpoint;
 use llm_verify::i18n::Lang;
-use llm_verify::probes::Depth;
+use llm_verify::probes::{blurb, registry, Depth, Selection, Subject};
 use llm_verify::report::{Group, ProbeResult, Report, Status};
 use llm_verify::util::pad_display;
 use llm_verify::{t, ts};
@@ -265,4 +265,104 @@ mod tests {
         // The group bar borrows from the same budget and must not underflow.
         assert!(label_width(Lang::Zh) > 4);
     }
+}
+
+/// `llm-verify probes` — the whole suite, printed without touching the network.
+///
+/// The unit here is the *selectable* step, not the reported result, because
+/// this listing exists to tell a caller what `--only` and `--skip` accept.
+/// That is why the counts differ: twenty-eight steps produce forty results.
+pub fn probe_catalog(lang: Lang, colour: bool, only: &[String], skip: &[String]) {
+    // Same vocabulary as `run --only/--skip`: ids or group names, resolved by
+    // the same code, so what this prints is exactly what a run would select.
+    let steps = Selection {
+        only: only.to_vec(),
+        skip: skip.to_vec(),
+        ..Default::default()
+    }
+    .resolve();
+    let turbo: std::collections::HashSet<&str> =
+        Selection::turbo().resolve().iter().map(|s| s.id).collect();
+    let width = steps.iter().map(|s| s.id.len()).max().unwrap_or(0);
+
+    println!();
+    println!(
+        "{}",
+        paint(&format!("llm-verify {}", env!("CARGO_PKG_VERSION")), BOLD, colour)
+    );
+    println!(
+        "  {}",
+        paint(
+            ts!(
+                lang,
+                "The suite, offline. Nothing on this page contacts an endpoint.",
+                "全部探针，离线列出，这里不发任何请求。"
+            ),
+            GREY,
+            colour
+        )
+    );
+
+    for g in Group::ALL {
+        let mine: Vec<_> = steps.iter().filter(|s| s.group == g).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        println!();
+        println!(
+            "  {}  {}",
+            paint(g.label(lang), BOLD, colour),
+            paint(g.blurb(lang), GREY, colour)
+        );
+        for spec in mine {
+            let mark = if turbo.contains(spec.id) { "*" } else { " " };
+            let subject = match spec.subject {
+                Subject::Endpoint => ts!(lang, "endpoint", "端点"),
+                Subject::Model => ts!(lang, "model", "模型"),
+            };
+            println!(
+                "  {} {} {} {}",
+                paint(mark, BLUE, colour),
+                pad_display(spec.id, width),
+                paint(&pad_display(subject, if lang == Lang::En { 8 } else { 4 }), DIM, colour),
+                blurb(spec.id, lang)
+            );
+        }
+    }
+
+    let results: usize = steps.iter().map(|s| s.results).sum();
+    println!();
+    println!(
+        "  {}",
+        paint(
+            &match lang {
+                Lang::En => {
+                    let p = |n: usize| if n == 1 { "" } else { "s" };
+                    format!(
+                        "{} step{}, {} result{}.",
+                        steps.len(),
+                        p(steps.len()),
+                        results,
+                        p(results)
+                    )
+                }
+                Lang::Zh => format!("{} 个步骤，{} 项结果。", steps.len(), results),
+            },
+            DIM,
+            colour
+        )
+    );
+    println!(
+        "  {}",
+        paint(
+            ts!(
+                lang,
+                "--only and --skip take any id or group name above; * marks what --turbo keeps.",
+                "--only / --skip 接受上面任意 id 或组名；带 * 的是 --turbo 会保留的。"
+            ),
+            DIM,
+            colour
+        )
+    );
+    println!();
 }
