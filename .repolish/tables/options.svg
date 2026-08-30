@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="521" viewBox="0 0 880 521" lang="en" role="img" aria-label="Options — table">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7d56f4"/>
+      <stop offset="0.55" stop-color="#ff5fd1"/>
+      <stop offset="1" stop-color="#43e5d0"/>
+    </linearGradient>
+  </defs>
+  <style>
+    .t { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "Noto Sans Mono CJK SC", "Noto Sans Mono CJK JP", "Microsoft YaHei", "Hiragino Sans", "Yu Gothic", monospace; }
+  </style>
+  <rect x="0" y="0" width="880" height="521" rx="18.0" fill="#1a1a24"/>
+  <rect x="0.5" y="0.5" width="879" height="520" rx="17.5" fill="none" stroke="#35334a"/>
+  <text class="t" x="28" y="38" font-size="11" fill="#8b87a3" text-anchor="start" letter-spacing="1.4">OPTIONS</text>
+  <text class="t" x="28" y="68" font-size="11" fill="#8b87a3" text-anchor="start" letter-spacing="1.4">FLAG</text>
+  <text class="t" x="284" y="68" font-size="11" fill="#8b87a3" text-anchor="start" letter-spacing="1.4">MEANING</text>
+  <rect x="28" y="78" width="824" height="1" fill="#35334a"/>
+  <rect x="28" y="89" width="206" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="102" font-size="12" fill="#edebfa" text-anchor="start">--protocol anthropic|openai</text>
+  <text class="t" x="284" y="102" font-size="13" fill="#edebfa" text-anchor="start">Inferred from the URL and model name if omitted</text>
+  <rect x="20" y="113" width="840" height="53" rx="5.0" fill="#222130"/>
+  <rect x="28" y="124" width="228" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="137" font-size="12" fill="#edebfa" text-anchor="start">--depth fast|balanced|forensic</text>
+  <text class="t" x="284" y="137" font-size="13" fill="#edebfa" text-anchor="start">Default balanced. forensic samples more — slower and costlier, but</text>
+  <text class="t" x="284" y="155" font-size="13" fill="#edebfa" text-anchor="start">firmer</text>
+  <rect x="28" y="177" width="62" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="190" font-size="12" fill="#edebfa" text-anchor="start">--turbo</text>
+  <text class="t" x="284" y="190" font-size="13" fill="#edebfa" text-anchor="start">The quickest run that still reaches a verdict: 9 requests instead of 21,</text>
+  <text class="t" x="284" y="208" font-size="13" fill="#edebfa" text-anchor="start">several at a time. Gives up the corroborating identity probes and the</text>
+  <text class="t" x="284" y="226" font-size="13" fill="#edebfa" text-anchor="start">contract checks that catch a reconstructed endpoint</text>
+  <rect x="20" y="237" width="840" height="53" rx="5.0" fill="#222130"/>
+  <rect x="28" y="248" width="120" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="261" font-size="12" fill="#edebfa" text-anchor="start">--concurrency N</text>
+  <text class="t" x="284" y="261" font-size="13" fill="#edebfa" text-anchor="start">Requests to keep in flight. Default 1. Only raise it against an endpoint</text>
+  <text class="t" x="284" y="279" font-size="13" fill="#edebfa" text-anchor="start">you know answers that many at once — latency probes always run alone</text>
+  <rect x="28" y="301" width="156" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="314" font-size="12" fill="#edebfa" text-anchor="start">--claimed-model &lt;ID&gt;</text>
+  <text class="t" x="284" y="314" font-size="13" fill="#edebfa" text-anchor="start">Use when the vendor&apos;s advertised name differs from the ID you request.</text>
+  <text class="t" x="284" y="332" font-size="13" fill="#edebfa" text-anchor="start">This is how you check for a downgrade</text>
+  <rect x="20" y="343" width="840" height="35" rx="5.0" fill="#222130"/>
+  <rect x="28" y="354" width="98" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="367" font-size="12" fill="#edebfa" text-anchor="start">--lang en|zh</text>
+  <text class="t" x="284" y="367" font-size="13" fill="#edebfa" text-anchor="start">Report language. Follows the system locale, then falls back to English</text>
+  <rect x="28" y="389" width="77" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="402" font-size="12" fill="#edebfa" text-anchor="start">-o &lt;path&gt;</text>
+  <text class="t" x="284" y="402" font-size="13" fill="#edebfa" text-anchor="start">HTML report path; pass a directory to auto-name the file</text>
+  <rect x="20" y="413" width="840" height="35" rx="5.0" fill="#222130"/>
+  <rect x="28" y="424" width="106" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="437" font-size="12" fill="#edebfa" text-anchor="start">--json &lt;path&gt;</text>
+  <text class="t" x="284" y="437" font-size="13" fill="#edebfa" text-anchor="start">Also emit machine-readable JSON</text>
+  <rect x="28" y="459" width="77" height="19" rx="4.0" fill="#222130"/>
+  <text class="t" x="34" y="472" font-size="12" fill="#edebfa" text-anchor="start">--no-open</text>
+  <text class="t" x="284" y="472" font-size="13" fill="#edebfa" text-anchor="start">Do not open a browser</text>
+  <rect x="28" y="483" width="824" height="1" fill="#35334a"/>
+</svg>

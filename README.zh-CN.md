@@ -73,14 +73,26 @@ llm-verify
 
 同一个模型两次检测的完整 HTML 报告：
 
+<img src=".repolish/tables/zh-cn/t-33c21b.svg" alt="运行示例" width="880">
+
+<details>
+<summary>运行示例（表格原文）</summary>
+
 | 报告 | 真伪 | 来源 | 评分 |
 |---|---|---|---|
 | [openrouter.ai](docs/llm-verify-openrouter-ai-20260815-125833.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-openrouter-ai-20260815-125833.html)） | 第三方转发 | 普通中转 | 92 / 100 |
 | [gw.asale.ai](docs/llm-verify-gw-asale-ai-20260815-130656.html)（[在线预览](https://htmlpreview.github.io/?https://github.com/asale-ai/llm-verify/blob/main/docs/llm-verify-gw-asale-ai-20260815-130656.html)） | 第三方转发 | 无法确定 | 93 / 100 |
 
+</details>
+
 同样的模型、同样的判定，分数只差两分，报告读起来却不一样：OpenRouter 在响应头里留了自己的标记，来源能落到具体的一跳；后一条路径没有任何渠道特征，来源只能是「无法确定」，而不是「干净」。来源和评分、判定是三条独立的读数。
 
 ### 常用参数
+
+<img src=".repolish/tables/zh-cn/t-71ac00.svg" alt="常用参数" width="880">
+
+<details>
+<summary>常用参数（表格原文）</summary>
 
 | 参数 | 说明 |
 |---|---|
@@ -94,13 +106,22 @@ llm-verify
 | `--json <path>` | 同时输出机器可读的 JSON |
 | `--no-open` | 不自动打开浏览器 |
 
+</details>
+
 ### 退出码
+
+<img src=".repolish/tables/zh-cn/t-402e74.svg" alt="退出码" width="880">
+
+<details>
+<summary>退出码（表格原文）</summary>
 
 | 码 | 含义 |
 |---|---|
 | 0 | 干净 |
 | 1 | 评分不及格，或判定为存疑 / 假冒 / 无法判定 |
 | 2 | 命中硬门禁 |
+
+</details>
 
 可以直接当 CI 门禁用。
 
@@ -145,6 +166,11 @@ clawhub install @asale-ai/llm-verify
 
 40 项探针，分七组：
 
+<img src=".repolish/tables/zh-cn/t-9472f3.svg" alt="能测什么" width="880">
+
+<details>
+<summary>能测什么（表格原文）</summary>
+
 | 组 | 回答的问题 |
 |---|---|
 | 协议契约 | 这是不是一条正牌 API 通道 |
@@ -154,6 +180,8 @@ clawhub install @asale-ai/llm-verify
 | 性能速度 | 首字延迟、吞吐与抖动 |
 | 模型身份 | 背后跑的是不是它声称的那个模型 |
 | 跨请求一致性 | 多次请求的行为是否一致 |
+
+</details>
 
 ## 能力边界
 
