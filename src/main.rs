@@ -35,6 +35,9 @@ struct Cli {
     run: RunArgs,
 }
 
+// clap wants the args struct by value on the variant, so the size spread
+// between the two is not ours to fix — and there is one of these per run.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Verify an endpoint (the default command)

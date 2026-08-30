@@ -600,7 +600,6 @@ pub fn blurb(id: &str, lang: Lang) -> &'static str {
     }
 }
 
-
 /// Which steps to run.
 #[derive(Clone, Default)]
 pub struct Selection {

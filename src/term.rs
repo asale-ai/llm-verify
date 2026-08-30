@@ -7,7 +7,7 @@
 
 use llm_verify::client::Endpoint;
 use llm_verify::i18n::Lang;
-use llm_verify::probes::{blurb, registry, Depth, Selection, Subject};
+use llm_verify::probes::{blurb, Depth, Selection, Subject};
 use llm_verify::report::{Group, ProbeResult, Report, Status};
 use llm_verify::util::pad_display;
 use llm_verify::{t, ts};
@@ -246,27 +246,6 @@ pub fn summary(rep: &Report, colour: bool) {
     println!("{}", paint(&"─".repeat(72), DIM, colour));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn paint_is_a_noop_when_colour_is_off() {
-        assert_eq!(paint("x", RED, false), "x");
-        assert!(paint("x", RED, true).contains("\x1b[31m"));
-    }
-
-    #[test]
-    fn english_columns_are_wider_than_chinese_ones() {
-        // Rendered width, not character count, is what keeps the columns
-        // aligned; English needs more of it for the same content.
-        assert!(label_width(Lang::En) > label_width(Lang::Zh));
-        assert!(key_width(Lang::En) > key_width(Lang::Zh));
-        // The group bar borrows from the same budget and must not underflow.
-        assert!(label_width(Lang::Zh) > 4);
-    }
-}
-
 /// `llm-verify probes` — the whole suite, printed without touching the network.
 ///
 /// The unit here is the *selectable* step, not the reported result, because
@@ -288,7 +267,11 @@ pub fn probe_catalog(lang: Lang, colour: bool, only: &[String], skip: &[String])
     println!();
     println!(
         "{}",
-        paint(&format!("llm-verify {}", env!("CARGO_PKG_VERSION")), BOLD, colour)
+        paint(
+            &format!("llm-verify {}", env!("CARGO_PKG_VERSION")),
+            BOLD,
+            colour
+        )
     );
     println!(
         "  {}",
@@ -324,7 +307,11 @@ pub fn probe_catalog(lang: Lang, colour: bool, only: &[String], skip: &[String])
                 "  {} {} {} {}",
                 paint(mark, BLUE, colour),
                 pad_display(spec.id, width),
-                paint(&pad_display(subject, if lang == Lang::En { 8 } else { 4 }), DIM, colour),
+                paint(
+                    &pad_display(subject, if lang == Lang::En { 8 } else { 4 }),
+                    DIM,
+                    colour
+                ),
                 blurb(spec.id, lang)
             );
         }
@@ -365,4 +352,25 @@ pub fn probe_catalog(lang: Lang, colour: bool, only: &[String], skip: &[String])
         )
     );
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paint_is_a_noop_when_colour_is_off() {
+        assert_eq!(paint("x", RED, false), "x");
+        assert!(paint("x", RED, true).contains("\x1b[31m"));
+    }
+
+    #[test]
+    fn english_columns_are_wider_than_chinese_ones() {
+        // Rendered width, not character count, is what keeps the columns
+        // aligned; English needs more of it for the same content.
+        assert!(label_width(Lang::En) > label_width(Lang::Zh));
+        assert!(key_width(Lang::En) > key_width(Lang::Zh));
+        // The group bar borrows from the same budget and must not underflow.
+        assert!(label_width(Lang::Zh) > 4);
+    }
 }
