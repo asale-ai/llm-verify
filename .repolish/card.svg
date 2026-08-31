@@ -139,7 +139,7 @@
   <text class="t" x="74" y="414" font-size="13" fill="#edebfa" text-anchor="start" font-weight="700">repo-homepage</text>
   <text class="t" x="74" y="432" font-size="12" fill="#8b87a3" text-anchor="start">Set the homepage in the repository settings. With no dedicated site, the documentation will do — docs.rs,…</text>
   <rect x="36" y="462" width="808" height="1" fill="#35334a"/>
-  <text class="t" x="36" y="486" font-size="12" fill="#8b87a3" text-anchor="start">asale-ai/llm-verify · 38821dd1</text>
+  <text class="t" x="36" y="486" font-size="12" fill="#8b87a3" text-anchor="start">asale-ai/llm-verify · 333d2d62</text>
   <text class="t" x="844" y="486" font-size="12" fill="#8b87a3" text-anchor="end">repolish v0.5.0</text>
   <text class="t" x="36" y="504" font-size="11" fill="#8b87a3" text-anchor="start">Scoring is deterministic. No model is involved.</text>
 </svg>
