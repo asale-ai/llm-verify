@@ -139,6 +139,15 @@ struct RunArgs {
     #[arg(long)]
     seed: Option<u64>,
 
+    /// Never send `temperature`.
+    ///
+    /// Use when the endpoint accepts only the provider's default sampling
+    /// value and rejects anything else with `400 ... does not support
+    /// non-default temperature`. A matching 400 during preflight also switches
+    /// this on automatically for the rest of the run.
+    #[arg(long)]
+    no_temperature: bool,
+
     /// HTML report path. Pass a directory to auto-name the file
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
@@ -383,6 +392,7 @@ async fn run(args: RunArgs) -> Result<i32> {
         .max_in_flight(overlap);
     cfg.selection = selection;
     cfg.seed = args.seed;
+    cfg.omit_temperature = args.no_temperature;
 
     let mut on_event = |ev: Event<'_>| {
         if args.quiet {
