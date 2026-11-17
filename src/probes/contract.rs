@@ -64,7 +64,7 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     let body_lower = raw.body.to_ascii_lowercase();
     if raw.status == 400
         && !ctx.client.omits_temperature()
-        && (body_lower.contains("temperature") || raw.body.contains("温度"))
+        && (body_lower.contains("temperature") || raw.body.contains("\u{6e29}\u{5ea6}"))
     {
         ctx.client.set_omit_temperature(true);
         match ctx
