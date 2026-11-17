@@ -172,6 +172,19 @@ pub struct Client {
     /// `None` is unlimited, which is the right answer for a sequential run and
     /// the wrong one for a concurrent one. See [`Client::with_limit`].
     limit: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    /// Omit `temperature` from request bodies.
+    ///
+    /// Some endpoints serve only the provider's default sampling setting and
+    /// answer every request that names another one with `400 ... does not
+    /// support non-default temperature`. That refusal says nothing about the
+    /// model, and it makes the suite impossible to run at all — the preflight
+    /// is one of those requests. Switching this on is the difference between
+    /// "cannot verify this endpoint" and "verified without pinning sampling".
+    ///
+    /// Atomic for the same reason as `request_count`: probes borrow the client
+    /// from several concurrent futures, and the preflight may flip this while
+    /// later steps are already being scheduled.
+    omit_temperature: std::sync::atomic::AtomicBool,
 }
 
 impl Client {
@@ -206,6 +219,7 @@ impl Client {
             endpoint,
             request_count: std::sync::atomic::AtomicU32::new(0),
             limit: None,
+            omit_temperature: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -250,6 +264,38 @@ impl Client {
     pub fn requests(&self) -> u32 {
         self.request_count
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether default request bodies currently omit `temperature`.
+    pub fn omits_temperature(&self) -> bool {
+        self.omit_temperature
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Turn temperature omission on or off for subsequent requests.
+    ///
+    /// `preflight` flips this itself when an endpoint answers a request that
+    /// named a temperature with the provider's "non-default temperature"
+    /// refusal; callers can also set it before the run through
+    /// [`RunConfig::no_temperature`](crate::engine::RunConfig::no_temperature).
+    pub fn set_omit_temperature(&self, omit: bool) {
+        self.omit_temperature
+            .store(omit, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The body actually put on the wire for a default-built request.
+    ///
+    /// A caller-supplied `raw_body` bypasses this on purpose: a probe that
+    /// hands in an exact payload is testing that payload, and silently editing
+    /// it would change what the probe is asserting.
+    fn payload_body(&self, body: &Value) -> Value {
+        let mut body = body.clone();
+        if self.omits_temperature() {
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("temperature");
+            }
+        }
+        body
     }
 
     fn count_request(&self) {
@@ -304,7 +350,7 @@ impl Client {
         let url = self.endpoint.url(path);
         let payload = match &opts.raw_body {
             Some(b) => b.clone(),
-            None => serde_json::to_vec(body)?,
+            None => serde_json::to_vec(&self.payload_body(body))?,
         };
 
         let mut req = self.http.post(&url).body(payload);
@@ -390,6 +436,7 @@ impl Client {
         self.count_request();
         let proto = self.endpoint.protocol;
         let body = req.clone().stream(true).to_body(proto);
+        let body = self.payload_body(&body);
         let url = self.endpoint.url(proto.chat_path());
 
         let mut http_req = self.http.post(&url).body(serde_json::to_vec(&body)?);

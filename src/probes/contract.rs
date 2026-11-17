@@ -33,8 +33,9 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     .weight(3);
     let t0 = now_ms();
     let req = ping(ctx);
+    let requested_omission = ctx.client.omits_temperature();
 
-    let raw = match ctx
+    let mut raw = match ctx
         .client
         .post_raw(
             ctx.client.endpoint.protocol.chat_path(),
@@ -52,6 +53,46 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
                 .took((now_ms() - t0) as u64);
         }
     };
+
+    // Some endpoints serve only the provider's default sampling value and
+    // refuse any request that names a temperature with
+    // `400 ... does not support non-default temperature`. That is a property
+    // of the endpoint rather than a verdict about the model, and every later
+    // probe would hit the same wall. Retry once without the field and carry
+    // on; the probe summary records that sampling was not pinned.
+    let mut temperature_fallback = false;
+    let body_lower = raw.body.to_ascii_lowercase();
+    if raw.status == 400
+        && !ctx.client.omits_temperature()
+        && (body_lower.contains("temperature") || raw.body.contains("温度"))
+    {
+        ctx.client.set_omit_temperature(true);
+        match ctx
+            .client
+            .post_raw(
+                ctx.client.endpoint.protocol.chat_path(),
+                &req.to_body(ctx.client.endpoint.protocol),
+                &RequestOpts::default(),
+            )
+            .await
+        {
+            Ok(retry) => {
+                temperature_fallback = true;
+                raw = retry;
+            }
+            Err(e) => {
+                ctx.set_reachable(false);
+                return p
+                    .error(t!(l, "Cannot connect: {e}", "无法连接：{e}"))
+                    .finding(t!(
+                        l,
+                        "The endpoint rejected temperature and the retry without it could not connect",
+                        "端点拒绝 temperature，去掉该参数重试时连接失败"
+                    ))
+                    .took((now_ms() - t0) as u64);
+            }
+        }
+    }
 
     let took = (now_ms() - t0) as u64;
     let body_excerpt = crate::util::truncate(raw.body.trim(), 300);
@@ -133,15 +174,33 @@ pub async fn preflight(ctx: &Ctx) -> ProbeResult {
     }
 
     ctx.observe(&raw, "");
-    p.pass(t!(
-        l,
-        "Endpoint reachable, {}ms",
-        "端点可达，{}ms",
-        raw.duration_ms
-    ))
-    .metric("status", raw.status)
-    .metric("duration_ms", raw.duration_ms)
-    .took(took)
+    let mut p = p
+        .pass(t!(
+            l,
+            "Endpoint reachable, {}ms",
+            "端点可达，{}ms",
+            raw.duration_ms
+        ))
+        .metric("status", raw.status)
+        .metric("duration_ms", raw.duration_ms);
+    if temperature_fallback {
+        p = p
+            .finding(t!(
+                l,
+                "The endpoint rejects non-default temperature; this run omitted it (determinism and cache-replay evidence is weaker)",
+                "端点拒绝非默认 temperature，本轮已改为不传该参数（确定性、缓存回放类证据会弱一些）"
+            ))
+            .metric("temperature_omitted", true);
+    } else if requested_omission {
+        p = p
+            .finding(t!(
+                l,
+                "temperature omitted because the caller asked for it",
+                "按调用方要求，本轮未发送 temperature"
+            ))
+            .metric("temperature_omitted", true);
+    }
+    p.took(took)
 }
 
 /// Does the endpoint's own catalogue list the model it just served?

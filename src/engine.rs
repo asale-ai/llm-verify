@@ -38,6 +38,12 @@ pub struct RunConfig {
     /// Requests this run may have in flight at once, whatever the schedule.
     /// See [`RunConfig::max_in_flight`].
     pub max_in_flight: usize,
+    /// Omit `temperature` from request bodies from the first request on.
+    ///
+    /// For endpoints that accept only the provider's default sampling setting.
+    /// `preflight` also discovers this by itself; setting it here just skips
+    /// the refused first attempt.
+    pub omit_temperature: bool,
 }
 
 impl RunConfig {
@@ -53,6 +59,7 @@ impl RunConfig {
             pace: None,
             concurrency: 1,
             max_in_flight: 0,
+            omit_temperature: false,
         }
     }
 
@@ -107,6 +114,17 @@ impl RunConfig {
     /// endpoint sees. This does. `0` leaves it uncapped.
     pub fn max_in_flight(mut self, n: usize) -> Self {
         self.max_in_flight = n;
+        self
+    }
+
+    /// Never send `temperature`.
+    ///
+    /// For endpoints whose model accepts only the provider's default sampling
+    /// value. The preflight also switches to this automatically when the
+    /// endpoint refuses a non-default temperature with a `400`; this method is
+    /// for callers that already know and want to spend one request fewer.
+    pub fn no_temperature(mut self) -> Self {
+        self.omit_temperature = true;
         self
     }
 
@@ -172,6 +190,9 @@ pub async fn run(
         None => Client::new(cfg.endpoint.clone())?,
     };
     let client = client.with_limit(cfg.max_in_flight);
+    // Requested omission is set before any probe runs, so `preflight` spends
+    // no refused attempt learning what the caller already told us.
+    client.set_omit_temperature(cfg.omit_temperature);
     let ctx = Ctx::with_seed(client, cfg.depth, cfg.lang, claimed_model.clone(), seed);
 
     let specs = cfg.selection.resolve();
